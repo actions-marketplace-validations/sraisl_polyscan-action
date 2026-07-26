@@ -7,16 +7,7 @@ import * as path from "path";
 import * as tc from "@actions/tool-cache";
 import { Finding, EngineResult, Severity } from "../schema";
 import { run, which } from "../exec";
-
-// Resolve the target path relative to the GitHub workspace (if set),
-// not the action's own directory — otherwise '.' resolves to the wrong place.
-function resolveTarget(target: string): string {
-  const ws = process.env.GITHUB_WORKSPACE;
-  if (ws && !path.isAbsolute(target)) {
-    return path.resolve(ws, target);
-  }
-  return path.resolve(target);
-}
+import { resolveTarget } from "../target";
 
 const SPOTBUGS_VERSION = "4.8.6";
 const SPOTBUGS_URL = `https://github.com/spotbugs/spotbugs/releases/download/${SPOTBUGS_VERSION}/spotbugs-${SPOTBUGS_VERSION}.tgz`;

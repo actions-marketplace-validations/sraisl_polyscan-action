@@ -6,16 +6,9 @@ import * as os from "os";
 import * as path from "path";
 import { Finding, EngineResult, Severity } from "../schema";
 import { run, which } from "../exec";
+import { resolveTarget } from "../target";
 
 const GITLEAKS_VERSION = "8.21.0";
-
-function resolveTarget(target: string): string {
-  const ws = process.env.GITHUB_WORKSPACE;
-  if (ws && !path.isAbsolute(target)) {
-    return path.resolve(ws, target);
-  }
-  return path.resolve(target);
-}
 
 // gitleaks severities in its SARIF are "Critical"/"High"/"Low"/"Info"; map to ours.
 function mapSeverity(level: string): Severity {

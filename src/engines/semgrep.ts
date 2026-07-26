@@ -2,6 +2,7 @@
 import * as core from "@actions/core";
 import { Finding, EngineResult, Severity } from "../schema";
 import { run, which, ensurePythonTool } from "../exec";
+import { resolveTarget } from "../target";
 
 function mapSeverity(s: string): Severity {
   switch ((s || "").toUpperCase()) {
@@ -46,6 +47,7 @@ export async function runSemgrep(target: string): Promise<EngineResult> {
   if (!ok) {
     return { engine: "semgrep", findings: [], available: false, note: "semgrep not installed" };
   }
+  const abs = resolveTarget(target);
 
   const res = await run("semgrep", [
     "--config",
@@ -53,7 +55,7 @@ export async function runSemgrep(target: string): Promise<EngineResult> {
     "--json",
     "--quiet",
     "--no-git-ignore",
-    target,
+    abs,
   ]);
 
   if (!res.stdout.trim()) {

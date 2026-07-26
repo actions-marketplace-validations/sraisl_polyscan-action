@@ -2,6 +2,7 @@
 import * as core from "@actions/core";
 import { Finding, EngineResult, Severity } from "../schema";
 import { run, which, ensurePythonTool } from "../exec";
+import { resolveTarget } from "../target";
 
 function mapSeverity(s: string): Severity {
   switch ((s || "").toUpperCase()) {
@@ -42,9 +43,10 @@ export async function runBandit(target: string): Promise<EngineResult> {
   if (!ok) {
     return { engine: "bandit", findings: [], available: false, note: "bandit not installed" };
   }
+  const abs = resolveTarget(target);
 
   // bandit exits 1 when issues are found — that's fine.
-  const res = await run("bandit", ["-r", target, "-f", "json", "-q"]);
+  const res = await run("bandit", ["-r", abs, "-f", "json", "-q"]);
 
   if (!res.stdout.trim()) {
     return { engine: "bandit", findings: [], available: true, note: res.stderr.slice(0, 300) };

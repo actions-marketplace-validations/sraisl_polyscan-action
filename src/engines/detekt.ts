@@ -6,16 +6,7 @@ import * as os from "os";
 import * as path from "path";
 import { Finding, EngineResult, Severity } from "../schema";
 import { run, which } from "../exec";
-
-// Resolve the target path relative to the GitHub workspace (if set),
-// not the action's own directory — otherwise '.' resolves to the wrong place.
-function resolveTarget(target: string): string {
-  const ws = process.env.GITHUB_WORKSPACE;
-  if (ws && !path.isAbsolute(target)) {
-    return path.resolve(ws, target);
-  }
-  return path.resolve(target);
-}
+import { resolveTarget } from "../target";
 
 const DETEKT_VERSION = "1.23.7";
 const DETEKT_URL = `https://github.com/detekt/detekt/releases/download/v${DETEKT_VERSION}/detekt-cli-${DETEKT_VERSION}-all.jar`;

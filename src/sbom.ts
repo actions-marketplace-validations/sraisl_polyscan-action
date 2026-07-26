@@ -6,6 +6,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as crypto from "crypto";
 import pkg from "../package.json";
+import { resolveTarget } from "./target";
 
 interface Component {
   type: string;
@@ -171,7 +172,7 @@ function detectMaven(target: string, comps: Component[]): void {
 }
 
 export function toSbom(target: string): string {
-  const abs = path.resolve(target);
+  const abs = resolveTarget(target);
   const comps: Component[] = [];
   detectNpm(abs, comps);
   detectPip(abs, comps);

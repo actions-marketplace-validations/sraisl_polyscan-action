@@ -6,6 +6,7 @@ import * as os from "os";
 import * as path from "path";
 import { Finding, EngineResult, Severity } from "../schema";
 import { run } from "../exec";
+import { resolveTarget } from "../target";
 
 function mapSeverity(sev: number): Severity {
   // ESLint: 2 = error, 1 = warning
@@ -69,7 +70,7 @@ export async function runEslint(target: string): Promise<EngineResult> {
   const configPath = path.join(workdir, "eslint.config.cjs");
   fs.writeFileSync(configPath, FLAT_CONFIG);
 
-  const absTarget = path.resolve(target);
+  const absTarget = resolveTarget(target);
   const eslintBin = path.join(workdir, "node_modules", ".bin", "eslint");
   const res = await run(
     eslintBin,
