@@ -31,27 +31,35 @@ export function toSarif(findings: Finding[]): string {
     fullDescription: { text: r.desc },
   }));
 
-  const results = findings.map((f) => ({
-    ruleId: `${f.engine}/${f.ruleId}`,
-    level: sarifLevel(f.severity),
-    message: { text: f.message },
-    properties: {
-      engine: f.engine,
-      severity: f.severity,
-      ...(f.cwe ? { cwe: f.cwe } : {}),
-    },
-    locations: [
-      {
-        physicalLocation: {
-          artifactLocation: { uri: f.file.replace(/^\.\//, "") },
-          region: {
-            startLine: Math.max(1, f.line),
-            ...(f.column ? { startColumn: f.column } : {}),
-          },
-        },
+  const results = findings.map((f) => {
+    const imageFinding = f.source?.startsWith("image:");
+    return {
+      ruleId: `${f.engine}/${f.ruleId}`,
+      level: sarifLevel(f.severity),
+      message: { text: f.message },
+      properties: {
+        engine: f.engine,
+        severity: f.severity,
+        ...(f.cwe ? { cwe: f.cwe } : {}),
+        ...(f.source ? { source: f.source } : {}),
       },
-    ],
-  }));
+      ...(!imageFinding
+        ? {
+            locations: [
+              {
+                physicalLocation: {
+                  artifactLocation: { uri: f.file.replace(/^\.\//, "") },
+                  region: {
+                    startLine: Math.max(1, f.line),
+                    ...(f.column ? { startColumn: f.column } : {}),
+                  },
+                },
+              },
+            ],
+          }
+        : {}),
+    };
+  });
 
   const sarif = {
     $schema: "https://json.schemastore.org/sarif-2.1.0.json",

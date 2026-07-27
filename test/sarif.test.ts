@@ -30,3 +30,21 @@ test("toSarif serializes normalized findings into SARIF results", () => {
   assert.equal(result.locations[0].physicalLocation.region.startLine, 12);
   assert.equal(result.properties.cwe, "CWE-95");
 });
+
+test("toSarif omits file locations for container image findings", () => {
+  const findings: Finding[] = [
+    {
+      engine: "trivy",
+      ruleId: "CVE-2026-1234",
+      severity: "critical",
+      message: "vulnerable package",
+      file: "alpine:3.20",
+      line: 0,
+      source: "image:example/app:latest",
+    },
+  ];
+
+  const result = JSON.parse(toSarif(findings)).runs[0].results[0];
+  assert.equal(result.locations, undefined);
+  assert.equal(result.properties.source, "image:example/app:latest");
+});

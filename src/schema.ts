@@ -11,11 +11,11 @@ export const SEVERITY_ORDER: Severity[] = [
 ];
 
 export interface Finding {
-  engine: string; // semgrep | bandit | eslint | spotbugs
+  engine: string;
   ruleId: string; // engine-native rule identifier
   severity: Severity;
   message: string;
-  file: string; // path relative to the scan target when possible
+  file: string; // POSIX path relative to GITHUB_WORKSPACE for filesystem findings
   line: number;
   column?: number;
   cwe?: string; // e.g. "CWE-89"
@@ -25,8 +25,8 @@ export interface Finding {
 export interface EngineResult {
   engine: string;
   findings: Finding[];
-  available: boolean; // false when the engine tool was not found / failed to run
-  note?: string; // diagnostic (e.g. "tool not installed", stderr excerpt)
+  status: "success" | "skipped" | "failed";
+  note?: string;
 }
 
 export interface SeverityCounts {

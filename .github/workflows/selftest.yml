@@ -36,6 +36,26 @@ jobs:
             exit 1
           fi
 
+      - name: Assert SARIF paths are repository-relative
+        run: |
+          node -e '
+            const fs = require("node:fs");
+            const sarif = JSON.parse(fs.readFileSync("polyscan.sarif", "utf8"));
+            const uris = sarif.runs.flatMap(run => run.results ?? [])
+              .flatMap(result => result.locations ?? [])
+              .map(location => location.physicalLocation?.artifactLocation?.uri)
+              .filter(Boolean);
+            const invalid = uris.filter(uri =>
+              uri.startsWith("/") ||
+              uri.includes(process.env.GITHUB_WORKSPACE) ||
+              !uri.startsWith("test-fixtures/")
+            );
+            if (invalid.length) {
+              console.error("Invalid SARIF paths:", invalid);
+              process.exit(1);
+            }
+          '
+
       - name: Upload SARIF to code scanning
         if: always()
         continue-on-error: true   # code scanning needs GHAS (not on private repos without it)

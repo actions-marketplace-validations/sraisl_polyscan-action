@@ -7,21 +7,17 @@ import * as path from "path";
 import * as tc from "@actions/tool-cache";
 import { Finding, EngineResult, Severity } from "../schema";
 import { run, which } from "../exec";
-
-// Resolve the target path relative to the GitHub workspace (if set),
-// not the action's own directory — otherwise '.' resolves to the wrong place.
-function resolveTarget(target: string): string {
-  const ws = process.env.GITHUB_WORKSPACE;
-  if (ws && !path.isAbsolute(target)) {
-    return path.resolve(ws, target);
-  }
-  return path.resolve(target);
-}
+import { resolveTarget } from "../target";
+import { cachedTool, downloadVerified } from "../tools";
 
 const SPOTBUGS_VERSION = "4.8.6";
 const SPOTBUGS_URL = `https://github.com/spotbugs/spotbugs/releases/download/${SPOTBUGS_VERSION}/spotbugs-${SPOTBUGS_VERSION}.tgz`;
+const SPOTBUGS_SHA256 = "b9d4d25e53cd4202b2dc19c549c0ff54f8a72fc76a71a8c40dee94422c67ebea";
 const FINDSECBUGS_VERSION = "1.13.0";
 const FINDSECBUGS_URL = `https://repo1.maven.org/maven2/com/h3xstream/findsecbugs/findsecbugs-plugin/${FINDSECBUGS_VERSION}/findsecbugs-plugin-${FINDSECBUGS_VERSION}.jar`;
+const FINDSECBUGS_SHA256 = "c239763a8c327b5fb653a34dece6398578bf435b9a32c212bb8e1abe701368a5";
+const KOTLIN_VERSION = "1.9.24";
+const KOTLIN_SHA256 = "eb7b68e01029fa67bc8d060ee54c12018f2c60ddc438cf21db14517229aa693b";
 
 // FindSecBugs bug patterns considered high severity (security-critical).
 const HIGH_PATTERNS = new Set([
@@ -113,128 +109,146 @@ async function tryProjectBuild(
   return [];
 }
 
+async function ensureKotlinc(): Promise<string | null> {
+  if (await which("kotlinc")) return "kotlinc";
+  try {
+    return await cachedTool(
+      "kotlin-compiler",
+      KOTLIN_VERSION,
+      path.join("kotlinc", "bin", "kotlinc"),
+      async (directory) => {
+        const archive = await downloadVerified(
+          `https://github.com/JetBrains/kotlin/releases/download/v${KOTLIN_VERSION}/kotlin-compiler-${KOTLIN_VERSION}.zip`,
+          KOTLIN_SHA256,
+        );
+        await tc.extractZip(archive, directory);
+      },
+    );
+  } catch (err) {
+    core.warning(`kotlinc download failed: ${String(err).slice(0, 200)}`);
+    return null;
+  }
+}
+
+async function ensureSpotbugs(): Promise<string | null> {
+  const cacheVersion = `${SPOTBUGS_VERSION}-findsecbugs-${FINDSECBUGS_VERSION}`;
+  const executable = path.join(`spotbugs-${SPOTBUGS_VERSION}`, "bin", "spotbugs");
+  try {
+    return await cachedTool("spotbugs", cacheVersion, executable, async (directory) => {
+      const archive = await downloadVerified(SPOTBUGS_URL, SPOTBUGS_SHA256);
+      await tc.extractTar(archive, directory);
+
+      const plugin = await downloadVerified(FINDSECBUGS_URL, FINDSECBUGS_SHA256);
+      const pluginDir = path.join(directory, `spotbugs-${SPOTBUGS_VERSION}`, "plugin");
+      fs.copyFileSync(plugin, path.join(pluginDir, "findsecbugs-plugin.jar"));
+      fs.chmodSync(path.join(directory, executable), 0o755);
+    });
+  } catch (err) {
+    core.warning(`spotbugs installation failed: ${String(err).slice(0, 200)}`);
+    return null;
+  }
+}
+
 export async function runSpotbugs(target: string): Promise<EngineResult> {
   const abs = resolveTarget(target);
   const javaFiles = findJavaFiles(abs);
   const kotlinFiles = findKotlinFiles(abs);
   const allSources = [...javaFiles, ...kotlinFiles];
   if (allSources.length === 0) {
-    return { engine: "spotbugs", findings: [], available: true, note: "no .java/.kt files found" };
+    return { engine: "spotbugs", findings: [], status: "skipped", note: "no .java/.kt files found" };
   }
 
   const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "polyscan-spotbugs-"));
-  const noteParts: string[] = [];
+  try {
+    const noteParts: string[] = [];
 
-  // Strategy 1 (preferred): use the project's own build so the full dependency
-  // classpath is present — this is what makes SpotBugs reliable on real Java/Kotlin apps.
-  let classDirs = await tryProjectBuild(abs, noteParts);
+    // Prefer the project's build so SpotBugs receives the full dependency classpath.
+    let classDirs = await tryProjectBuild(abs, noteParts);
 
-  // Strategy 2 (fallback): direct compilation without dependencies (best-effort;
-  // only produces .class files for code that doesn't need third-party imports).
-  if (classDirs.length === 0) {
-    if (!(await which("javac"))) {
-      return { engine: "spotbugs", findings: [], available: false, note: "no build tool succeeded and javac not available" };
-    }
-    core.info("No build output found — falling back to direct javac/kotlinc compilation…");
-    const classesDir = path.join(workdir, "classes");
-    fs.mkdirSync(classesDir, { recursive: true });
-
-    if (javaFiles.length > 0) {
-      const compile = await run("javac", ["-d", classesDir, ...javaFiles]);
-      if (compile.exitCode !== 0) noteParts.push("javac had errors (missing deps?)");
-    }
-
-    if (kotlinFiles.length > 0) {
-      if (!(await which("kotlinc"))) {
-        core.info("kotlinc not found — downloading…");
-        const kt = await run("bash", [
-          "-lc",
-          [
-            "set -e",
-            "KV=1.9.24",
-            `cd ${workdir}`,
-            'curl -sSL -o kotlin.zip "https://github.com/JetBrains/kotlin/releases/download/v${KV}/kotlin-compiler-${KV}.zip"',
-            "unzip -q kotlin.zip",
-          ].join("\n"),
-        ]);
-        if (kt.exitCode !== 0) noteParts.push("kotlinc unavailable");
+    // Fall back to dependency-free direct compilation.
+    if (classDirs.length === 0) {
+      if (!(await which("javac"))) {
+        return {
+          engine: "spotbugs",
+          findings: [],
+          status: "failed",
+          note: "no build tool succeeded and javac not available",
+        };
       }
-      const kotlincBin = (await which("kotlinc")) ? "kotlinc" : `${workdir}/kotlinc/bin/kotlinc`;
-      if (fs.existsSync(kotlincBin) || (await which("kotlinc"))) {
-        const ktc = await run(kotlincBin, [...kotlinFiles, "-d", classesDir]);
-        if (ktc.exitCode !== 0) noteParts.push("kotlinc had errors (missing deps?)");
+      core.info("No build output found — falling back to direct javac/kotlinc compilation…");
+      const classesDir = path.join(workdir, "classes");
+      fs.mkdirSync(classesDir, { recursive: true });
+
+      if (javaFiles.length > 0) {
+        const compile = await run("javac", ["-d", classesDir, ...javaFiles]);
+        if (compile.exitCode !== 0) noteParts.push("javac had errors (missing deps?)");
+      }
+
+      if (kotlinFiles.length > 0) {
+        const kotlincBin = await ensureKotlinc();
+        if (kotlincBin) {
+          const ktc = await run(kotlincBin, [...kotlinFiles, "-d", classesDir]);
+          if (ktc.exitCode !== 0) noteParts.push("kotlinc had errors (missing deps?)");
+        } else {
+          noteParts.push("kotlinc unavailable");
+        }
+      }
+
+      if (fs.existsSync(classesDir) && fs.readdirSync(classesDir).length > 0) {
+        classDirs = [classesDir];
       }
     }
 
-    if (fs.existsSync(classesDir) && fs.readdirSync(classesDir).length > 0) {
-      classDirs = [classesDir];
+    if (classDirs.length === 0) {
+      return {
+        engine: "spotbugs",
+        findings: [],
+        status: "failed",
+        note: `no .class files to analyze${noteParts.length ? " (" + noteParts.join("; ") + ")" : ""}`,
+      };
     }
-  }
 
-  if (classDirs.length === 0) {
+    const sbScript = await ensureSpotbugs();
+    if (!sbScript) {
+      return {
+        engine: "spotbugs",
+        findings: [],
+        status: "failed",
+        note: "spotbugs or FindSecBugs installation failed",
+      };
+    }
+
+    const xmlOut = path.join(workdir, "spotbugs.xml");
+    const res = await run(sbScript, [
+      "-textui",
+      "-xml:withMessages",
+      "-effort:max",
+      "-low",
+      "-output",
+      xmlOut,
+      ...classDirs,
+    ]);
+
+    if (!fs.existsSync(xmlOut)) {
+      return {
+        engine: "spotbugs",
+        findings: [],
+        status: "failed",
+        note: `spotbugs run failed: ${res.stderr.slice(0, 200)}`,
+      };
+    }
+
+    const xml = fs.readFileSync(xmlOut, "utf-8");
+    const findings = parseSpotbugsXml(xml, allSources);
     return {
       engine: "spotbugs",
-      findings: [],
-      available: false,
-      note: `no .class files to analyze${noteParts.length ? " (" + noteParts.join("; ") + ")" : ""}`,
+      findings,
+      status: "success",
+      note: noteParts.length ? noteParts.join("; ") : undefined,
     };
+  } finally {
+    fs.rmSync(workdir, { recursive: true, force: true });
   }
-
-  // Download + extract SpotBugs.
-  let spotbugsHome: string;
-  try {
-    const tgz = await tc.downloadTool(SPOTBUGS_URL);
-    const extracted = await tc.extractTar(tgz, path.join(workdir, "sb"));
-    spotbugsHome = path.join(extracted, `spotbugs-${SPOTBUGS_VERSION}`);
-  } catch (err) {
-    return {
-      engine: "spotbugs",
-      findings: [],
-      available: false,
-      note: `spotbugs download failed: ${String(err).slice(0, 200)}`,
-    };
-  }
-
-  // Download FindSecBugs plugin.
-  const pluginDir = path.join(spotbugsHome, "plugin");
-  try {
-    const jar = await tc.downloadTool(FINDSECBUGS_URL);
-    fs.copyFileSync(jar, path.join(pluginDir, "findsecbugs-plugin.jar"));
-  } catch (err) {
-    core.warning(`findsecbugs download failed (continuing with core spotbugs): ${String(err).slice(0, 150)}`);
-  }
-
-  const xmlOut = path.join(workdir, "spotbugs.xml");
-  const sbScript = path.join(spotbugsHome, "bin", "spotbugs");
-  fs.chmodSync(sbScript, 0o755);
-
-  const res = await run(sbScript, [
-    "-textui",
-    "-xml:withMessages",
-    "-effort:max",
-    "-low",
-    "-output",
-    xmlOut,
-    ...classDirs,
-  ]);
-
-  if (!fs.existsSync(xmlOut)) {
-    return {
-      engine: "spotbugs",
-      findings: [],
-      available: false,
-      note: `spotbugs run failed: ${res.stderr.slice(0, 200)}`,
-    };
-  }
-
-  const xml = fs.readFileSync(xmlOut, "utf-8");
-  const findings = parseSpotbugsXml(xml, allSources);
-  return {
-    engine: "spotbugs",
-    findings,
-    available: true,
-    note: noteParts.length ? noteParts.join("; ") : undefined,
-  };
 }
 
 // Lightweight XML parse (avoids a heavy XML dependency in the bundle).

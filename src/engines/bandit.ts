@@ -2,6 +2,9 @@
 import * as core from "@actions/core";
 import { Finding, EngineResult, Severity } from "../schema";
 import { run, which, ensurePythonTool } from "../exec";
+import { resolveTarget } from "../target";
+
+const BANDIT_VERSION = "1.9.4";
 
 function mapSeverity(s: string): Severity {
   switch ((s || "").toUpperCase()) {
@@ -16,8 +19,8 @@ function mapSeverity(s: string): Severity {
   }
 }
 
-async function ensureInstalled(): Promise<boolean> {
-  return ensurePythonTool("bandit", "bandit", core);
+async function ensureInstalled() {
+  return ensurePythonTool("bandit", BANDIT_VERSION, "bandit", core);
 }
 
 export function parseBanditJson(stdout: string): Finding[] {
@@ -38,29 +41,47 @@ export function parseBanditJson(stdout: string): Finding[] {
 }
 
 export async function runBandit(target: string): Promise<EngineResult> {
-  const ok = await ensureInstalled();
-  if (!ok) {
-    return { engine: "bandit", findings: [], available: false, note: "bandit not installed" };
+  const tool = await ensureInstalled();
+  if (!tool) {
+    return { engine: "bandit", findings: [], status: "failed", note: "bandit not installed" };
   }
-
-  // bandit exits 1 when issues are found — that's fine.
-  const res = await run("bandit", ["-r", target, "-f", "json", "-q"]);
-
-  if (!res.stdout.trim()) {
-    return { engine: "bandit", findings: [], available: true, note: res.stderr.slice(0, 300) };
-  }
-
-  let findings: Finding[];
   try {
-    findings = parseBanditJson(res.stdout);
-  } catch (err) {
-    return {
-      engine: "bandit",
-      findings: [],
-      available: true,
-      note: `parse error: ${String(err).slice(0, 200)}`,
-    };
-  }
+    const abs = resolveTarget(target);
 
-  return { engine: "bandit", findings, available: true };
+    // bandit exits 1 when issues are found; exit codes above 1 are execution errors.
+    const res = await run(tool.executable, ["-r", abs, "-f", "json", "-q"]);
+    if (res.exitCode > 1) {
+      return {
+        engine: "bandit",
+        findings: [],
+        status: "failed",
+        note: res.stderr.slice(0, 300) || `bandit exited ${res.exitCode}`,
+      };
+    }
+
+    if (!res.stdout.trim()) {
+      return {
+        engine: "bandit",
+        findings: [],
+        status: "failed",
+        note: res.stderr.slice(0, 300) || "bandit produced no output",
+      };
+    }
+
+    let findings: Finding[];
+    try {
+      findings = parseBanditJson(res.stdout);
+    } catch (err) {
+      return {
+        engine: "bandit",
+        findings: [],
+        status: "failed",
+        note: `parse error: ${String(err).slice(0, 200)}`,
+      };
+    }
+
+    return { engine: "bandit", findings, status: "success" };
+  } finally {
+    tool.cleanup();
+  }
 }

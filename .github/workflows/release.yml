@@ -17,14 +17,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (current main)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: main
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: "npm"
@@ -33,7 +33,13 @@ jobs:
         run: npm ci
 
       - name: Build dist (verify it matches committed)
-        run: npm run build
+        run: |
+          npm run build
+          if [ -n "$(git status --porcelain dist | grep -v '\.map$')" ]; then
+            echo "::error::dist runtime files differ from source."
+            git diff --stat dist
+            exit 1
+          fi
 
       - name: Compute next version
         id: version
