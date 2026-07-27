@@ -7,10 +7,12 @@ import { Finding, EngineResult, Severity } from "../schema";
 import { run, which } from "../exec";
 import { resolveTarget } from "../target";
 import { cachedTool, downloadVerified } from "../tools";
+import { githubReleaseUrl, TOOLS } from "../tool-versions";
 
-const DETEKT_VERSION = "1.23.7";
-const DETEKT_URL = `https://github.com/detekt/detekt/releases/download/v${DETEKT_VERSION}/detekt-cli-${DETEKT_VERSION}-all.jar`;
-const DETEKT_SHA256 = "84beded283012cb2b38bcaef4996452fcd6069d2e9ca74b50eaa79e0ad21897e";
+const DETEKT = TOOLS.detekt;
+const DETEKT_VERSION = DETEKT.version;
+const DETEKT_URL = githubReleaseUrl(DETEKT);
+const DETEKT_SHA256 = DETEKT.sha256;
 
 // detekt SARIF levels: error/warning/note → map to our severities.
 function mapSeverity(level: string, ruleId: string): Severity {

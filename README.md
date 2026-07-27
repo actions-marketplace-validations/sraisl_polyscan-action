@@ -89,6 +89,19 @@ Python engines are installed into isolated, version-pinned environments; downloa
 
 Read-only engines run with bounded concurrency (`max-concurrency`, default `2`). SpotBugs may invoke a project build and therefore runs as a serial barrier: all earlier engines finish before it starts, and later engines start only after it completes.
 
+## Updating scanner tools
+
+Scanner and helper-tool versions are pinned centrally in `tools.lock.json`.
+
+```bash
+npm run engines:list
+npm run engines:check
+npm run engines:check -- trivy semgrep
+npm run engines:update -- trivy 0.73.0
+```
+
+`engines:check` only reads official provider metadata. `engines:update` requires an explicit version, validates it against GitHub Releases, PyPI, npm, or Maven Central, verifies downloaded binary artifacts against provider checksums, updates the lock file, then runs the typecheck, tests, and production bundle build. Use `--dry-run` to verify an update without writing files. `--skip-project-checks` skips only the local typecheck, tests, and build; provider and artifact verification always remain enabled.
+
 ## Development
 
 ```bash

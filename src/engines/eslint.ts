@@ -7,8 +7,9 @@ import { Finding, EngineResult, Severity } from "../schema";
 import { run } from "../exec";
 import { resolveTarget } from "../target";
 import { cachedTool } from "../tools";
+import { TOOLS } from "../tool-versions";
 
-const ESLINT_VERSION = "8.57.1";
+const ESLINT_VERSION = TOOLS.eslint.version;
 
 function mapSeverity(sev: number): Severity {
   // ESLint: 2 = error, 1 = warning

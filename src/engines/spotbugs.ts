@@ -9,15 +9,19 @@ import { Finding, EngineResult, Severity } from "../schema";
 import { run, which } from "../exec";
 import { resolveTarget } from "../target";
 import { cachedTool, downloadVerified } from "../tools";
+import { githubReleaseUrl, mavenArtifactUrl, TOOLS } from "../tool-versions";
 
-const SPOTBUGS_VERSION = "4.8.6";
-const SPOTBUGS_URL = `https://github.com/spotbugs/spotbugs/releases/download/${SPOTBUGS_VERSION}/spotbugs-${SPOTBUGS_VERSION}.tgz`;
-const SPOTBUGS_SHA256 = "b9d4d25e53cd4202b2dc19c549c0ff54f8a72fc76a71a8c40dee94422c67ebea";
-const FINDSECBUGS_VERSION = "1.13.0";
-const FINDSECBUGS_URL = `https://repo1.maven.org/maven2/com/h3xstream/findsecbugs/findsecbugs-plugin/${FINDSECBUGS_VERSION}/findsecbugs-plugin-${FINDSECBUGS_VERSION}.jar`;
-const FINDSECBUGS_SHA256 = "c239763a8c327b5fb653a34dece6398578bf435b9a32c212bb8e1abe701368a5";
-const KOTLIN_VERSION = "1.9.24";
-const KOTLIN_SHA256 = "eb7b68e01029fa67bc8d060ee54c12018f2c60ddc438cf21db14517229aa693b";
+const SPOTBUGS = TOOLS.spotbugs;
+const FINDSECBUGS = TOOLS.findsecbugs;
+const KOTLIN = TOOLS.kotlin;
+const SPOTBUGS_VERSION = SPOTBUGS.version;
+const SPOTBUGS_URL = githubReleaseUrl(SPOTBUGS);
+const SPOTBUGS_SHA256 = SPOTBUGS.sha256;
+const FINDSECBUGS_VERSION = FINDSECBUGS.version;
+const FINDSECBUGS_URL = mavenArtifactUrl(FINDSECBUGS);
+const FINDSECBUGS_SHA256 = FINDSECBUGS.sha256;
+const KOTLIN_VERSION = KOTLIN.version;
+const KOTLIN_SHA256 = KOTLIN.sha256;
 
 // FindSecBugs bug patterns considered high severity (security-critical).
 const HIGH_PATTERNS = new Set([
@@ -126,7 +130,7 @@ async function ensureKotlinc(): Promise<string | null> {
       path.join("kotlinc", "bin", "kotlinc"),
       async (directory) => {
         const archive = await downloadVerified(
-          `https://github.com/JetBrains/kotlin/releases/download/v${KOTLIN_VERSION}/kotlin-compiler-${KOTLIN_VERSION}.zip`,
+          githubReleaseUrl(KOTLIN),
           KOTLIN_SHA256,
         );
         await tc.extractZip(archive, directory);
