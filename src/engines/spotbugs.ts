@@ -1,9 +1,9 @@
 // SpotBugs + FindSecBugs engine adapter for Java/Kotlin.
 // Compiles .java sources, downloads SpotBugs+FindSecBugs on demand, parses XML.
 import * as core from "@actions/core";
-import * as fs from "fs";
-import * as os from "os";
-import * as path from "path";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import * as tc from "@actions/tool-cache";
 import { Finding, EngineResult, Severity } from "../schema";
 import { run, which } from "../exec";
@@ -32,7 +32,7 @@ const HIGH_PATTERNS = new Set([
 
 function mapSeverity(type: string, priority: string): Severity {
   if (HIGH_PATTERNS.has(type)) return "high";
-  const p = parseInt(priority, 10);
+  const p = Number.parseInt(priority, 10);
   if (p === 1) return "high";
   if (p === 2) return "medium";
   return "low";
@@ -83,30 +83,38 @@ async function tryProjectBuild(
   abs: string,
   noteParts: string[],
 ): Promise<string[]> {
-  // Maven
-  if (fs.existsSync(path.join(abs, "pom.xml")) && (await which("mvn"))) {
-    core.info("Detected pom.xml — running 'mvn compile' for a full classpath…");
-    const res = await run("mvn", ["-q", "-B", "-DskipTests", "compile"], { cwd: abs });
-    if (res.exitCode !== 0) noteParts.push("mvn compile had errors");
-    const dirs = findClassDirs(abs);
-    if (dirs.length) return dirs;
-  }
-  // Gradle
+  const mavenClasses = await tryMavenBuild(abs, noteParts);
+  if (mavenClasses.length > 0) return mavenClasses;
+  return tryGradleBuild(abs, noteParts);
+}
+
+async function tryMavenBuild(abs: string, noteParts: string[]): Promise<string[]> {
+  if (!fs.existsSync(path.join(abs, "pom.xml")) || !(await which("mvn"))) return [];
+  core.info("Detected pom.xml — running 'mvn compile' for a full classpath…");
+  const result = await run("mvn", ["-q", "-B", "-DskipTests", "compile"], { cwd: abs });
+  if (result.exitCode !== 0) noteParts.push("mvn compile had errors");
+  return findClassDirs(abs);
+}
+
+async function gradleCommand(abs: string): Promise<string> {
   const gradlew = path.join(abs, "gradlew");
+  if (fs.existsSync(gradlew)) return gradlew;
+  return (await which("gradle")) ? "gradle" : "";
+}
+
+async function tryGradleBuild(abs: string, noteParts: string[]): Promise<string[]> {
   const hasGradle =
     fs.existsSync(path.join(abs, "build.gradle")) ||
     fs.existsSync(path.join(abs, "build.gradle.kts"));
-  if (hasGradle) {
-    const gradleCmd = fs.existsSync(gradlew) ? gradlew : (await which("gradle")) ? "gradle" : "";
-    if (gradleCmd) {
-      core.info("Detected Gradle build — running 'classes' task for a full classpath…");
-      const res = await run(gradleCmd, ["classes", "--console=plain", "-q"], { cwd: abs });
-      if (res.exitCode !== 0) noteParts.push("gradle build had errors");
-      const dirs = findClassDirs(abs);
-      if (dirs.length) return dirs;
-    }
-  }
-  return [];
+  if (!hasGradle) return [];
+
+  const command = await gradleCommand(abs);
+  if (!command) return [];
+
+  core.info("Detected Gradle build — running 'classes' task for a full classpath…");
+  const result = await run(command, ["classes", "--console=plain", "-q"], { cwd: abs });
+  if (result.exitCode !== 0) noteParts.push("gradle build had errors");
+  return findClassDirs(abs);
 }
 
 async function ensureKotlinc(): Promise<string | null> {
@@ -141,12 +149,85 @@ async function ensureSpotbugs(): Promise<string | null> {
       const plugin = await downloadVerified(FINDSECBUGS_URL, FINDSECBUGS_SHA256);
       const pluginDir = path.join(directory, `spotbugs-${SPOTBUGS_VERSION}`, "plugin");
       fs.copyFileSync(plugin, path.join(pluginDir, "findsecbugs-plugin.jar"));
-      fs.chmodSync(path.join(directory, executable), 0o755);
+      fs.chmodSync(path.join(directory, executable), 0o700);
     });
   } catch (err) {
     core.warning(`spotbugs installation failed: ${String(err).slice(0, 200)}`);
     return null;
   }
+}
+
+async function compileJava(javaFiles: string[], classesDir: string, notes: string[]): Promise<void> {
+  if (javaFiles.length === 0) return;
+  const result = await run("javac", ["-d", classesDir, ...javaFiles]);
+  if (result.exitCode !== 0) notes.push("javac had errors (missing deps?)");
+}
+
+async function compileKotlin(
+  kotlinFiles: string[],
+  classesDir: string,
+  notes: string[],
+): Promise<void> {
+  if (kotlinFiles.length === 0) return;
+  const command = await ensureKotlinc();
+  if (!command) {
+    notes.push("kotlinc unavailable");
+    return;
+  }
+  const result = await run(command, [...kotlinFiles, "-d", classesDir]);
+  if (result.exitCode !== 0) notes.push("kotlinc had errors (missing deps?)");
+}
+
+async function compileWithoutBuild(
+  javaFiles: string[],
+  kotlinFiles: string[],
+  workdir: string,
+  notes: string[],
+): Promise<string[]> {
+  if (!(await which("javac"))) {
+    notes.push("javac not available");
+    return [];
+  }
+
+  core.info("No build output found — falling back to direct javac/kotlinc compilation…");
+  const classesDir = path.join(workdir, "classes");
+  fs.mkdirSync(classesDir, { recursive: true });
+  await compileJava(javaFiles, classesDir, notes);
+  await compileKotlin(kotlinFiles, classesDir, notes);
+
+  const hasClasses = fs.existsSync(classesDir) && fs.readdirSync(classesDir).length > 0;
+  return hasClasses ? [classesDir] : [];
+}
+
+async function analyzeClasses(
+  script: string,
+  classDirs: string[],
+  workdir: string,
+  sources: string[],
+): Promise<EngineResult> {
+  const output = path.join(workdir, "spotbugs.xml");
+  const result = await run(script, [
+    "-textui",
+    "-xml:withMessages",
+    "-effort:max",
+    "-low",
+    "-output",
+    output,
+    ...classDirs,
+  ]);
+  if (!fs.existsSync(output)) {
+    return {
+      engine: "spotbugs",
+      findings: [],
+      status: "failed",
+      note: `spotbugs run failed: ${result.stderr.slice(0, 200)}`,
+    };
+  }
+  return {
+    engine: "spotbugs",
+    findings: parseSpotbugsXml(fs.readFileSync(output, "utf-8"), sources),
+    status: "success",
+  };
 }
 
 export async function runSpotbugs(target: string): Promise<EngineResult> {
@@ -161,42 +242,9 @@ export async function runSpotbugs(target: string): Promise<EngineResult> {
   const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "polyscan-spotbugs-"));
   try {
     const noteParts: string[] = [];
-
-    // Prefer the project's build so SpotBugs receives the full dependency classpath.
     let classDirs = await tryProjectBuild(abs, noteParts);
-
-    // Fall back to dependency-free direct compilation.
     if (classDirs.length === 0) {
-      if (!(await which("javac"))) {
-        return {
-          engine: "spotbugs",
-          findings: [],
-          status: "failed",
-          note: "no build tool succeeded and javac not available",
-        };
-      }
-      core.info("No build output found — falling back to direct javac/kotlinc compilation…");
-      const classesDir = path.join(workdir, "classes");
-      fs.mkdirSync(classesDir, { recursive: true });
-
-      if (javaFiles.length > 0) {
-        const compile = await run("javac", ["-d", classesDir, ...javaFiles]);
-        if (compile.exitCode !== 0) noteParts.push("javac had errors (missing deps?)");
-      }
-
-      if (kotlinFiles.length > 0) {
-        const kotlincBin = await ensureKotlinc();
-        if (kotlincBin) {
-          const ktc = await run(kotlincBin, [...kotlinFiles, "-d", classesDir]);
-          if (ktc.exitCode !== 0) noteParts.push("kotlinc had errors (missing deps?)");
-        } else {
-          noteParts.push("kotlinc unavailable");
-        }
-      }
-
-      if (fs.existsSync(classesDir) && fs.readdirSync(classesDir).length > 0) {
-        classDirs = [classesDir];
-      }
+      classDirs = await compileWithoutBuild(javaFiles, kotlinFiles, workdir, noteParts);
     }
 
     if (classDirs.length === 0) {
@@ -208,8 +256,8 @@ export async function runSpotbugs(target: string): Promise<EngineResult> {
       };
     }
 
-    const sbScript = await ensureSpotbugs();
-    if (!sbScript) {
+    const script = await ensureSpotbugs();
+    if (!script) {
       return {
         engine: "spotbugs",
         findings: [],
@@ -218,34 +266,10 @@ export async function runSpotbugs(target: string): Promise<EngineResult> {
       };
     }
 
-    const xmlOut = path.join(workdir, "spotbugs.xml");
-    const res = await run(sbScript, [
-      "-textui",
-      "-xml:withMessages",
-      "-effort:max",
-      "-low",
-      "-output",
-      xmlOut,
-      ...classDirs,
-    ]);
-
-    if (!fs.existsSync(xmlOut)) {
-      return {
-        engine: "spotbugs",
-        findings: [],
-        status: "failed",
-        note: `spotbugs run failed: ${res.stderr.slice(0, 200)}`,
-      };
-    }
-
-    const xml = fs.readFileSync(xmlOut, "utf-8");
-    const findings = parseSpotbugsXml(xml, allSources);
-    return {
-      engine: "spotbugs",
-      findings,
-      status: "success",
-      note: noteParts.length ? noteParts.join("; ") : undefined,
-    };
+    const result = await analyzeClasses(script, classDirs, workdir, allSources);
+    const notes = [...(result.note ? [result.note] : []), ...noteParts];
+    result.note = notes.length > 0 ? notes.join("; ") : undefined;
+    return result;
   } finally {
     fs.rmSync(workdir, { recursive: true, force: true });
   }
@@ -278,7 +302,7 @@ export function parseSpotbugsXml(xml: string, javaFiles: string[]): Finding[] {
       severity: mapSeverity(type, priority),
       message: shortMsg || type,
       file: resolved,
-      line: parseInt(start, 10) || 0,
+      line: Number.parseInt(start, 10) || 0,
       cwe: cweMatch ? `CWE-${cweMatch}` : undefined,
     });
   }

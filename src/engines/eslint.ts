@@ -1,9 +1,8 @@
 // ESLint engine adapter for JS/TS security-relevant rules.
 // Uses a minimal flat config with no-eval / no-implied-eval and scans *.js/*.ts.
-import * as core from "@actions/core";
-import * as fs from "fs";
-import * as os from "os";
-import * as path from "path";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { Finding, EngineResult, Severity } from "../schema";
 import { run } from "../exec";
 import { resolveTarget } from "../target";

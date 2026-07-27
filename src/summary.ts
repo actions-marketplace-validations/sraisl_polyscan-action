@@ -1,7 +1,6 @@
 // Render a Markdown job summary for GitHub Actions.
-import { Finding, SeverityCounts } from "./schema";
+import { EngineResult, Finding, SeverityCounts } from "./schema";
 import { GateResult } from "./gate";
-import { EngineResult } from "./schema";
 
 const SEV_EMOJI: Record<string, string> = {
   critical: "🟣",
@@ -12,11 +11,133 @@ const SEV_EMOJI: Record<string, string> = {
 };
 
 function tableCell(value: string): string {
-  return value.replace(/\r?\n/g, " ").replace(/\|/g, "\\|").trim();
+  return value
+    .split(/\r?\n/)
+    .join(" ")
+    .replaceAll("|", String.raw`\|`)
+    .trim();
 }
 
 function code(value: string): string {
-  return `\`${tableCell(value).replace(/`/g, "'")}\``;
+  return `\`${tableCell(value).replaceAll("`", "'")}\``;
+}
+
+function severitySection(counts: SeverityCounts): string[] {
+  return [
+    "| Severity | Count |",
+    "|---|---|",
+    `| ${SEV_EMOJI.critical} Critical | ${counts.critical} |`,
+    `| ${SEV_EMOJI.high} High | ${counts.high} |`,
+    `| ${SEV_EMOJI.medium} Medium | ${counts.medium} |`,
+    `| ${SEV_EMOJI.low} Low | ${counts.low} |`,
+    `| ${SEV_EMOJI.info} Info | ${counts.info} |`,
+    `| **Total** | **${counts.total}** |`,
+    "",
+  ];
+}
+
+function engineIcon(result: EngineResult): string {
+  if (result.status === "success") return "✅";
+  if (result.status === "skipped") return "ℹ️";
+  return "⚠️";
+}
+
+function engineSection(results: EngineResult[]): string[] {
+  const lines = ["### Engines"];
+  for (const result of results) {
+    const note = result.note ? ` — _${tableCell(result.note)}_` : "";
+    lines.push(
+      `- ${engineIcon(result)} **${tableCell(result.engine)}**: ` +
+        `${result.findings.length} findings (${result.status})${note}`,
+    );
+  }
+  return [...lines, ""];
+}
+
+function findingLocation(finding: Finding): string {
+  const cleanFile = finding.file.startsWith("./") ? finding.file.slice(2) : finding.file;
+  return finding.line > 0 ? `${cleanFile}:${finding.line}` : cleanFile;
+}
+
+function secretsSection(findings: Finding[]): string[] {
+  const secrets = findings.filter((finding) => finding.engine === "gitleaks");
+  if (secrets.length === 0) return [];
+
+  const lines = [
+    "### 🔑 Secrets Detected (gitleaks)",
+    "",
+    "| Rule | Location | Severity |",
+    "|---|---|---|",
+  ];
+  for (const finding of secrets) {
+    lines.push(
+      `| ${code(finding.ruleId)} | ${code(findingLocation(finding))} | ` +
+        `${SEV_EMOJI[finding.severity]} ${finding.severity} |`,
+    );
+  }
+  return [
+    ...lines,
+    "",
+    "_gitleaks is run with `--redact`: secret values are masked by gitleaks at source and do not appear in logs or SARIF._",
+    "",
+  ];
+}
+
+function imageSection(findings: Finding[]): string[] {
+  const imageFindings = findings.filter((finding) => finding.source?.startsWith("image:"));
+  if (imageFindings.length === 0) return [];
+
+  const imageName = imageFindings[0].source?.slice("image:".length) ?? "unknown";
+  const lines = [
+    `### 🐳 Container Image Scan (${code(imageName)})`,
+    "",
+    "| Sev | CVE / Rule | Finding | Layer |",
+    "|---|---|---|---|",
+  ];
+  for (const finding of imageFindings) {
+    const cwe = finding.cwe ? ` (${finding.cwe})` : "";
+    lines.push(
+      `| ${SEV_EMOJI[finding.severity]} ${finding.severity} | ` +
+        `${code(finding.ruleId)}${cwe} | ${tableCell(finding.message)} | ` +
+        `${tableCell(finding.file)} |`,
+    );
+  }
+  return [...lines, ""];
+}
+
+function findingsSection(findings: Finding[]): string[] {
+  if (findings.length === 0) return [];
+
+  const shown = findings.slice(0, 50);
+  const lines = [
+    "### Findings",
+    "| Sev | Rule | Location | Engine |",
+    "|---|---|---|---|",
+  ];
+  for (const finding of shown) {
+    const cwe = finding.cwe ? ` (${finding.cwe})` : "";
+    lines.push(
+      `| ${SEV_EMOJI[finding.severity]} ${finding.severity} | ` +
+        `${code(finding.ruleId)}${cwe} | ${code(findingLocation(finding))} | ` +
+        `${tableCell(finding.engine)} |`,
+    );
+  }
+  if (findings.length > shown.length) {
+    lines.push("", `_… and ${findings.length - shown.length} more findings._`);
+  }
+  return [...lines, ""];
+}
+
+function gateSection(gate: GateResult, enforced: boolean): string[] {
+  let result: string;
+  if (!enforced) {
+    result = "> ℹ️ Quality Gate not enforced (`gate: false`).";
+  } else if (gate.passed) {
+    result = "> ✅ **Passed** — thresholds satisfied.";
+  } else {
+    result = `> ❌ **Failed** — ${gate.reasons.join(", ")}.`;
+  }
+  return ["### Quality Gate", result, ""];
 }
 
 export function renderSummary(
@@ -26,94 +147,14 @@ export function renderSummary(
   gateEnforced: boolean,
   engineResults: EngineResult[],
 ): string {
-  const lines: string[] = [];
-  lines.push("## 🔍 PolyScan Report");
-  lines.push("");
-
-  // Severity table
-  lines.push("| Severity | Count |");
-  lines.push("|---|---|");
-  lines.push(`| ${SEV_EMOJI.critical} Critical | ${counts.critical} |`);
-  lines.push(`| ${SEV_EMOJI.high} High | ${counts.high} |`);
-  lines.push(`| ${SEV_EMOJI.medium} Medium | ${counts.medium} |`);
-  lines.push(`| ${SEV_EMOJI.low} Low | ${counts.low} |`);
-  lines.push(`| ${SEV_EMOJI.info} Info | ${counts.info} |`);
-  lines.push(`| **Total** | **${counts.total}** |`);
-  lines.push("");
-
-  // Engine status
-  lines.push("### Engines");
-  for (const e of engineResults) {
-    const icon = e.status === "success" ? "✅" : e.status === "skipped" ? "ℹ️" : "⚠️";
-    const note = e.note ? ` — _${tableCell(e.note)}_` : "";
-    lines.push(`- ${icon} **${tableCell(e.engine)}**: ${e.findings.length} findings (${e.status})${note}`);
-  }
-  lines.push("");
-
-  // Secret / leak findings (gitleaks) — shown prominently regardless of the
-  // top-50 cap on the generic findings table, since secrets deserve visibility.
-  const secrets = findings.filter((f) => f.engine === "gitleaks");
-  if (secrets.length > 0) {
-    lines.push("### 🔑 Secrets Detected (gitleaks)");
-    lines.push("");
-    lines.push("| Rule | Location | Severity |");
-    lines.push("|---|---|---|");
-    for (const f of secrets) {
-      const cleanFile = f.file.replace(/^\.\//, "");
-      const loc = f.line > 0 ? `${cleanFile}:${f.line}` : cleanFile;
-      lines.push(`| ${code(f.ruleId)} | ${code(loc)} | ${SEV_EMOJI[f.severity]} ${f.severity} |`);
-    }
-    lines.push("");
-    lines.push("_gitleaks is run with `--redact`: secret values are masked by gitleaks at source and do not appear in logs or SARIF._");
-    lines.push("");
-  }
-
-  // Container image findings (trivy image scan) — shown in a dedicated block.
-  const imageFindings = findings.filter((f) => f.source?.startsWith("image:"));
-  if (imageFindings.length > 0) {
-    const imageName = imageFindings[0].source!.slice("image:".length);
-    lines.push(`### 🐳 Container Image Scan (${code(imageName)})`);
-    lines.push("");
-    lines.push("| Sev | CVE / Rule | Finding | Layer |");
-    lines.push("|---|---|---|---|");
-    for (const f of imageFindings) {
-      const cwe = f.cwe ? ` (${f.cwe})` : "";
-      lines.push(`| ${SEV_EMOJI[f.severity]} ${f.severity} | ${code(f.ruleId)}${cwe} | ${tableCell(f.message)} | ${tableCell(f.file)} |`);
-    }
-    lines.push("");
-  }
-
-  // Findings table (top 50)
-  if (findings.length > 0) {
-    lines.push("### Findings");
-    lines.push("| Sev | Rule | Location | Engine |");
-    lines.push("|---|---|---|---|");
-    const shown = findings.slice(0, 50);
-    for (const f of shown) {
-      const cleanFile = f.file.replace(/^\.\//, "");
-      const loc = f.line > 0 ? `${cleanFile}:${f.line}` : cleanFile;
-      const cwe = f.cwe ? ` (${f.cwe})` : "";
-      lines.push(
-        `| ${SEV_EMOJI[f.severity]} ${f.severity} | ${code(f.ruleId)}${cwe} | ${code(loc)} | ${tableCell(f.engine)} |`,
-      );
-    }
-    if (findings.length > shown.length) {
-      lines.push("");
-      lines.push(`_… and ${findings.length - shown.length} more findings._`);
-    }
-    lines.push("");
-  }
-
-  // Quality Gate
-  lines.push("### Quality Gate");
-  if (!gateEnforced) {
-    lines.push("> ℹ️ Quality Gate not enforced (`gate: false`).");
-  } else if (gate.passed) {
-    lines.push("> ✅ **Passed** — thresholds satisfied.");
-  } else {
-    lines.push(`> ❌ **Failed** — ${gate.reasons.join(", ")}.`);
-  }
-  lines.push("");
-
-  return lines.join("\n");
+  return [
+    "## 🔍 PolyScan Report",
+    "",
+    ...severitySection(counts),
+    ...engineSection(engineResults),
+    ...secretsSection(findings),
+    ...imageSection(findings),
+    ...findingsSection(findings),
+    ...gateSection(gate, gateEnforced),
+  ].join("\n");
 }

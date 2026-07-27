@@ -1,7 +1,7 @@
 // Semgrep engine adapter — installs via pip if missing, runs with auto config.
 import * as core from "@actions/core";
 import { Finding, EngineResult, Severity } from "../schema";
-import { run, which, ensurePythonTool } from "../exec";
+import { run, ensurePythonTool } from "../exec";
 import { resolveTarget } from "../target";
 
 const SEMGREP_VERSION = "1.170.0";
@@ -38,7 +38,7 @@ export function parseSemgrepJson(stdout: string): Finding[] {
       file: r.path,
       line: r.start?.line ?? 0,
       column: r.start?.col,
-      cwe: cwe ? String(cwe).match(/CWE-\d+/)?.[0] : undefined,
+      cwe: cwe ? /CWE-\d+/.exec(String(cwe))?.[0] : undefined,
     });
   }
   return findings;

@@ -1,9 +1,9 @@
 // gitleaks engine adapter — secret / credential detection in git history + working tree.
 // Downloads the gitleaks binary on demand and parses its SARIF report.
 import * as core from "@actions/core";
-import * as fs from "fs";
-import * as os from "os";
-import * as path from "path";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import * as tc from "@actions/tool-cache";
 import { Finding, EngineResult, Severity } from "../schema";
 import { run, which } from "../exec";
@@ -106,7 +106,7 @@ async function ensureGitleaks(): Promise<string | null> {
         GITLEAKS_SHA256,
       );
       await tc.extractTar(archive, directory);
-      fs.chmodSync(path.join(directory, "gitleaks"), 0o755);
+      fs.chmodSync(path.join(directory, "gitleaks"), 0o700);
     });
   } catch (err) {
     core.warning(`gitleaks download failed: ${String(err).slice(0, 200)}`);
