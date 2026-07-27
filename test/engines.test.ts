@@ -12,9 +12,9 @@ test("resolveEngines expands all case-insensitively", () => {
 });
 
 test("resolveEngines keeps explicit comma-separated selections", () => {
-  assert.deepEqual(resolveEngines(" semgrep, bandit ,eslint "), [
+  assert.deepEqual(resolveEngines(" semgrep, gosec ,eslint "), [
     "semgrep",
-    "bandit",
+    "gosec",
     "eslint",
   ]);
 });

@@ -35,6 +35,14 @@
       "assetTemplate": "gitleaks_{version}_linux_x64.tar.gz",
       "sha256": "6c3a240509647225997d31df06e872350e1c0fe2fb85d323ae29a9fef0012586"
     },
+    "gosec": {
+      "provider": "github",
+      "repository": "securego/gosec",
+      "version": "2.28.0",
+      "tagTemplate": "v{version}",
+      "assetTemplate": "gosec_{version}_linux_amd64.tar.gz",
+      "sha256": "d7882e505b1ff345d458bf0e893eec8019bc849f861ad73a212869540dd505ff"
+    },
     "kotlin": {
       "provider": "github",
       "repository": "JetBrains/kotlin",

@@ -11,6 +11,7 @@ import { runSpotbugs } from "./engines/spotbugs";
 import { runTrivy } from "./engines/trivy";
 import { runDetekt } from "./engines/detekt";
 import { runGitleaks } from "./engines/gitleaks";
+import { runGosec } from "./engines/gosec";
 import { evaluateGate } from "./gate";
 import { toSarif } from "./sarif";
 import { toSbom } from "./sbom";
@@ -104,6 +105,8 @@ async function runEngine(name: string, target: string, trivyImage?: string): Pro
         return await runDetekt(target);
       case "gitleaks":
         return await runGitleaks(target);
+      case "gosec":
+        return await runGosec(target);
       default:
         return { engine: name, findings: [], status: "failed", note: "unknown engine" };
     }
