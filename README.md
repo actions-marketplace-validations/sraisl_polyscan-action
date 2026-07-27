@@ -46,6 +46,7 @@ jobs:
 |---|---|---|
 | `target` | `.` | Workspace-contained directory to scan |
 | `engines` | `all` | `all` or comma-separated engines: `semgrep,bandit,eslint,spotbugs,trivy,detekt,gitleaks` |
+| `max-concurrency` | `2` | Maximum concurrent read-only engines (`1`-`7`); SpotBugs runs as a serial barrier |
 | `max-critical` | `0` | Max critical findings before the gate fails |
 | `max-high` | `0` | Max high findings before the gate fails |
 | `max-medium` | `50` | Max medium findings before the gate fails |
@@ -85,6 +86,8 @@ jobs:
 Python engines are installed into isolated, version-pinned environments; downloaded tools are cached and verified with SHA-256. SpotBugs is **build-aware** — for real Java/Kotlin projects it invokes the project's own build (Maven/Gradle) so the full dependency classpath is available, which is required to detect data-flow bugs (SQLi, command injection) on **Java** (FindSecBugs does not target Kotlin bytecode). For **Kotlin** code-security use **detekt**, which analyzes Kotlin source natively. Trivy runs `--offline-scan` to avoid Maven Central rate limits.
 
 **Default: all engines run** (`engines: "all"` expands to `semgrep,bandit,eslint,spotbugs,trivy,detekt,gitleaks`). Restrict via the `engines` input, e.g. `engines: "spotbugs,trivy,detekt"`.
+
+Read-only engines run with bounded concurrency (`max-concurrency`, default `2`). SpotBugs may invoke a project build and therefore runs as a serial barrier: all earlier engines finish before it starts, and later engines start only after it completes.
 
 ## Development
 

@@ -18,6 +18,9 @@ import { renderSummary } from "./summary";
 import { resolveEngines, unknownEngines, ALL_ENGINES } from "./engines";
 import { normalizeFindingPath, resolveOutputDir, resolveTarget } from "./target";
 import { assertSupportedPlatform } from "./tools";
+import { mapConcurrentWithBarriers, parseMaxConcurrency } from "./scheduler";
+
+const DEFAULT_MAX_CONCURRENCY = 2;
 
 function boolInput(name: string, def: boolean): boolean {
   const raw = core.getInput(name);
@@ -41,6 +44,7 @@ interface ActionConfig {
   wantSbom: boolean;
   uploadArtifacts: boolean;
   uploadSarif: boolean;
+  maxConcurrency: number;
   outputDir: string;
   trivyImage?: string;
   gate: {
@@ -68,6 +72,11 @@ function readConfig(): ActionConfig {
     wantSbom: boolInput("sbom", false),
     uploadArtifacts: boolInput("upload-artifacts", true),
     uploadSarif: boolInput("upload-sarif", false),
+    maxConcurrency: parseMaxConcurrency(
+      core.getInput("max-concurrency"),
+      DEFAULT_MAX_CONCURRENCY,
+      ALL_ENGINES.length,
+    ),
     outputDir: resolveOutputDir(core.getInput("output-dir") || "."),
     trivyImage: core.getInput("trivy-image") || undefined,
     gate: {
@@ -123,17 +132,27 @@ function normalizeEngineFindings(result: EngineResult, target: string): void {
 }
 
 async function runEngines(config: ActionConfig): Promise<EngineResult[]> {
-  const engineResults: EngineResult[] = [];
-  for (const engine of config.engines) {
-    core.startGroup(`Engine: ${engine}`);
-    const result = await runEngine(engine, config.target, config.trivyImage);
-    normalizeEngineFindings(result, config.target);
-    core.info(`${engine}: ${result.findings.length} findings (status=${result.status})`);
-    if (result.note) core.info(`note: ${result.note}`);
-    core.endGroup();
-    engineResults.push(result);
-  }
-  return engineResults;
+  core.info(
+    `Engine concurrency: ${config.maxConcurrency} (spotbugs runs as a serial barrier)`,
+  );
+  return mapConcurrentWithBarriers(
+    config.engines,
+    config.maxConcurrency,
+    (engine) => engine === "spotbugs",
+    async (engine) => {
+      core.info(`[${engine}] started`);
+      const startedAt = Date.now();
+      const result = await runEngine(engine, config.target, config.trivyImage);
+      normalizeEngineFindings(result, config.target);
+      const elapsedSeconds = ((Date.now() - startedAt) / 1000).toFixed(1);
+      core.info(
+        `[${engine}] completed in ${elapsedSeconds}s: ${result.findings.length} findings ` +
+          `(status=${result.status})`,
+      );
+      if (result.note) core.info(`[${engine}] note: ${result.note}`);
+      return result;
+    },
+  );
 }
 
 function sortedFindings(engineResults: EngineResult[]): Finding[] {
