@@ -35943,6 +35943,8 @@ const summary_1 = __nccwpck_require__(8855);
 const engines_1 = __nccwpck_require__(2616);
 const target_1 = __nccwpck_require__(6746);
 const tools_1 = __nccwpck_require__(1732);
+const scheduler_1 = __nccwpck_require__(5622);
+const DEFAULT_MAX_CONCURRENCY = 2;
 function boolInput(name, def) {
     const raw = core.getInput(name);
     if (raw === "")
@@ -35971,6 +35973,7 @@ function readConfig() {
         wantSbom: boolInput("sbom", false),
         uploadArtifacts: boolInput("upload-artifacts", true),
         uploadSarif: boolInput("upload-sarif", false),
+        maxConcurrency: (0, scheduler_1.parseMaxConcurrency)(core.getInput("max-concurrency"), DEFAULT_MAX_CONCURRENCY, engines_1.ALL_ENGINES.length),
         outputDir: (0, target_1.resolveOutputDir)(core.getInput("output-dir") || "."),
         trivyImage: core.getInput("trivy-image") || undefined,
         gate: {
@@ -36023,18 +36026,19 @@ function normalizeEngineFindings(result, target) {
     }
 }
 async function runEngines(config) {
-    const engineResults = [];
-    for (const engine of config.engines) {
-        core.startGroup(`Engine: ${engine}`);
+    core.info(`Engine concurrency: ${config.maxConcurrency} (spotbugs runs as a serial barrier)`);
+    return (0, scheduler_1.mapConcurrentWithBarriers)(config.engines, config.maxConcurrency, (engine) => engine === "spotbugs", async (engine) => {
+        core.info(`[${engine}] started`);
+        const startedAt = Date.now();
         const result = await runEngine(engine, config.target, config.trivyImage);
         normalizeEngineFindings(result, config.target);
-        core.info(`${engine}: ${result.findings.length} findings (status=${result.status})`);
+        const elapsedSeconds = ((Date.now() - startedAt) / 1000).toFixed(1);
+        core.info(`[${engine}] completed in ${elapsedSeconds}s: ${result.findings.length} findings ` +
+            `(status=${result.status})`);
         if (result.note)
-            core.info(`note: ${result.note}`);
-        core.endGroup();
-        engineResults.push(result);
-    }
-    return engineResults;
+            core.info(`[${engine}] note: ${result.note}`);
+        return result;
+    });
 }
 function sortedFindings(engineResults) {
     const findings = engineResults.flatMap((result) => result.findings);
@@ -36455,6 +36459,71 @@ function toSbom(target) {
         components: comps,
     };
     return JSON.stringify(bom, null, 2);
+}
+
+
+/***/ }),
+
+/***/ 5622:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.parseMaxConcurrency = parseMaxConcurrency;
+exports.mapConcurrent = mapConcurrent;
+exports.mapConcurrentWithBarriers = mapConcurrentWithBarriers;
+function parseMaxConcurrency(raw, defaultValue, maximum) {
+    const value = raw.trim();
+    if (value === "")
+        return defaultValue;
+    if (!/^\d+$/.test(value)) {
+        throw new Error(`max-concurrency must be an integer between 1 and ${maximum}`);
+    }
+    const parsed = Number(value);
+    if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > maximum) {
+        throw new Error(`max-concurrency must be an integer between 1 and ${maximum}`);
+    }
+    return parsed;
+}
+async function mapConcurrent(items, maxConcurrency, task) {
+    if (!Number.isInteger(maxConcurrency) || maxConcurrency < 1) {
+        throw new Error("maxConcurrency must be a positive integer");
+    }
+    if (items.length === 0)
+        return [];
+    const results = new Array(items.length);
+    let nextIndex = 0;
+    async function worker() {
+        while (nextIndex < items.length) {
+            const index = nextIndex;
+            nextIndex += 1;
+            results[index] = await task(items[index]);
+        }
+    }
+    const workerCount = Math.min(maxConcurrency, items.length);
+    await Promise.all(Array.from({ length: workerCount }, () => worker()));
+    return results;
+}
+async function mapConcurrentWithBarriers(items, maxConcurrency, isBarrier, task) {
+    const results = [];
+    let batch = [];
+    async function flushBatch() {
+        if (batch.length === 0)
+            return;
+        results.push(...(await mapConcurrent(batch, maxConcurrency, task)));
+        batch = [];
+    }
+    for (const item of items) {
+        if (!isBarrier(item)) {
+            batch.push(item);
+            continue;
+        }
+        await flushBatch();
+        results.push(await task(item));
+    }
+    await flushBatch();
+    return results;
 }
 
 

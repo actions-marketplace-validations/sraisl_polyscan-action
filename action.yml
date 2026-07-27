@@ -14,6 +14,10 @@ inputs:
     description: "Comma-separated engines to run, or 'all': semgrep,bandit,eslint,spotbugs,trivy,detekt,gitleaks"
     required: false
     default: "all"
+  max-concurrency:
+    description: "Maximum number of read-only engines to run concurrently (1-7); SpotBugs always runs as a serial barrier"
+    required: false
+    default: "2"
   max-critical:
     description: "Max critical findings allowed before the Quality Gate fails"
     required: false
