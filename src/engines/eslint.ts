@@ -7,6 +7,9 @@ import * as path from "path";
 import { Finding, EngineResult, Severity } from "../schema";
 import { run } from "../exec";
 import { resolveTarget } from "../target";
+import { cachedTool } from "../tools";
+
+const ESLINT_VERSION = "8.57.1";
 
 function mapSeverity(sev: number): Severity {
   // ESLint: 2 = error, 1 = warning
@@ -49,50 +52,72 @@ export function parseEslintJson(stdout: string): Finding[] {
 
 export async function runEslint(target: string): Promise<EngineResult> {
   const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "polyscan-eslint-"));
-  // Install eslint 8 locally (flat-config capable, no plugin resolution headaches).
-  core.info("Installing eslint@8 …");
-  const init = await run("npm", ["init", "-y"], { cwd: workdir });
-  const install =
-    init.exitCode === 0
-      ? await run("npm", ["install", "--no-audit", "--no-fund", "--silent", "eslint@8"], {
-          cwd: workdir,
-        })
-      : init;
-  if (install.exitCode !== 0) {
-    return {
-      engine: "eslint",
-      findings: [],
-      available: false,
-      note: `eslint install failed: ${install.stderr.slice(0, 200)}`,
-    };
-  }
-
-  const configPath = path.join(workdir, "eslint.config.cjs");
-  fs.writeFileSync(configPath, FLAT_CONFIG);
-
-  const absTarget = resolveTarget(target);
-  const eslintBin = path.join(workdir, "node_modules", ".bin", "eslint");
-  const res = await run(
-    eslintBin,
-    ["--config", configPath, "--no-ignore", "-f", "json", "."],
-    { cwd: absTarget, env: { ESLINT_USE_FLAT_CONFIG: "true" } },
-  );
-
-  if (!res.stdout.trim()) {
-    return { engine: "eslint", findings: [], available: true, note: res.stderr.slice(0, 200) };
-  }
-
-  let findings: Finding[];
   try {
-    findings = parseEslintJson(res.stdout);
-  } catch (err) {
-    return {
-      engine: "eslint",
-      findings: [],
-      available: true,
-      note: `parse error: ${String(err).slice(0, 200)}`,
-    };
-  }
+    let eslintBin: string;
+    try {
+      eslintBin = await cachedTool(
+        "polyscan-eslint",
+        ESLINT_VERSION,
+        path.join("node_modules", ".bin", "eslint"),
+        async (directory) => {
+          const install = await run(
+            "npm",
+            ["install", "--no-audit", "--no-fund", "--silent", `eslint@${ESLINT_VERSION}`],
+            { cwd: directory },
+          );
+          if (install.exitCode !== 0) throw new Error(install.stderr || "npm install failed");
+        },
+      );
+    } catch (err) {
+      return {
+        engine: "eslint",
+        findings: [],
+        status: "failed",
+        note: `eslint install failed: ${String(err).slice(0, 200)}`,
+      };
+    }
 
-  return { engine: "eslint", findings, available: true };
+    const configPath = path.join(workdir, "eslint.config.cjs");
+    fs.writeFileSync(configPath, FLAT_CONFIG);
+
+    const absTarget = resolveTarget(target);
+    const res = await run(
+      eslintBin,
+      ["--config", configPath, "--no-ignore", "-f", "json", "."],
+      { cwd: absTarget, env: { ESLINT_USE_FLAT_CONFIG: "true" } },
+    );
+    if (res.exitCode > 1) {
+      return {
+        engine: "eslint",
+        findings: [],
+        status: "failed",
+        note: res.stderr.slice(0, 200) || `eslint exited ${res.exitCode}`,
+      };
+    }
+
+    if (!res.stdout.trim()) {
+      return {
+        engine: "eslint",
+        findings: [],
+        status: "failed",
+        note: res.stderr.slice(0, 200) || "eslint produced no output",
+      };
+    }
+
+    let findings: Finding[];
+    try {
+      findings = parseEslintJson(res.stdout);
+    } catch (err) {
+      return {
+        engine: "eslint",
+        findings: [],
+        status: "failed",
+        note: `parse error: ${String(err).slice(0, 200)}`,
+      };
+    }
+
+    return { engine: "eslint", findings, status: "success" };
+  } finally {
+    fs.rmSync(workdir, { recursive: true, force: true });
+  }
 }

@@ -5,11 +5,14 @@ import * as core from "@actions/core";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import * as tc from "@actions/tool-cache";
 import { Finding, EngineResult, Severity } from "../schema";
 import { run, which } from "../exec";
 import { resolveTarget } from "../target";
+import { cachedTool, downloadVerified } from "../tools";
 
 const TRIVY_VERSION = "0.72.0";
+const TRIVY_SHA256 = "bbb64b9695866ce4a7a8f5c9592002c5961cab378577fa3f8a040df362b9b2ea";
 
 function mapSeverity(s: string): Severity {
   switch ((s || "").toUpperCase()) {
@@ -26,25 +29,22 @@ function mapSeverity(s: string): Severity {
   }
 }
 
-async function ensureTrivy(workdir: string): Promise<string | null> {
+async function ensureTrivy(): Promise<string | null> {
   if (await which("trivy")) return "trivy";
   core.info(`trivy not found — downloading v${TRIVY_VERSION}…`);
-  const res = await run("bash", [
-    "-lc",
-    [
-      "set -e",
-      `cd ${workdir}`,
-      `curl -sSL -o trivy.tar.gz "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"`,
-      "tar xzf trivy.tar.gz",
-      "chmod +x trivy",
-    ].join("\n"),
-  ]);
-  const bin = path.join(workdir, "trivy");
-  if (res.exitCode !== 0 || !fs.existsSync(bin)) {
-    core.warning(`trivy download failed: ${res.stderr.slice(0, 200)}`);
+  try {
+    return await cachedTool("trivy", TRIVY_VERSION, "trivy", async (directory) => {
+      const archive = await downloadVerified(
+        `https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz`,
+        TRIVY_SHA256,
+      );
+      await tc.extractTar(archive, directory);
+      fs.chmodSync(path.join(directory, "trivy"), 0o755);
+    });
+  } catch (err) {
+    core.warning(`trivy download failed: ${String(err).slice(0, 200)}`);
     return null;
   }
-  return bin;
 }
 
 export function parseTrivyData(data: unknown, imageRef?: string): Finding[] {
@@ -102,63 +102,79 @@ export function parseTrivyData(data: unknown, imageRef?: string): Finding[] {
 
 export async function runTrivy(target: string, image?: string): Promise<EngineResult> {
   const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "polyscan-trivy-"));
-  const bin = await ensureTrivy(workdir);
-  if (!bin) {
-    return { engine: "trivy", findings: [], available: false, note: "trivy not installed" };
-  }
-
-  const allFindings: Finding[] = [];
-  const notes: string[] = [];
-
-  // Filesystem scan: vuln (SCA) + misconfig (IaC/Dockerfile/pom etc.).
-  // --offline-scan avoids resolving parent POMs over the network (Maven Central rate limits).
-  const fsOut = path.join(workdir, "trivy-fs.json");
-  const fsRes = await run(bin, [
-    "fs",
-    "--scanners", "vuln,misconfig",
-    "--offline-scan",
-    "--format", "json",
-    "--output", fsOut,
-    "--quiet",
-    resolveTarget(target),
-  ]);
-  if (fs.existsSync(fsOut)) {
-    try {
-      allFindings.push(...parseTrivyData(JSON.parse(fs.readFileSync(fsOut, "utf-8"))));
-    } catch (err) {
-      notes.push(`fs parse error: ${String(err).slice(0, 150)}`);
+  try {
+    const bin = await ensureTrivy();
+    if (!bin) {
+      return { engine: "trivy", findings: [], status: "failed", note: "trivy not installed" };
     }
-  } else {
-    notes.push(`fs scan produced no output: ${fsRes.stdout.slice(0, 150)}`);
-  }
 
-  // Image scan (only when an image name is provided).
-  if (image) {
-    core.info(`trivy: scanning image "${image}"…`);
-    const imgOut = path.join(workdir, "trivy-image.json");
-    const imgRes = await run(bin, [
-      "image",
-      "--scanners", "vuln",
-      "--format", "json",
-      "--output", imgOut,
+    const allFindings: Finding[] = [];
+    const notes: string[] = [];
+
+    // --offline-scan avoids resolving parent POMs over the network.
+    const fsOut = path.join(workdir, "trivy-fs.json");
+    const fsRes = await run(bin, [
+      "fs",
+      "--scanners",
+      "vuln,misconfig",
+      "--offline-scan",
+      "--format",
+      "json",
+      "--output",
+      fsOut,
       "--quiet",
-      image,
+      resolveTarget(target),
     ]);
-    if (fs.existsSync(imgOut)) {
+    if (fsRes.exitCode !== 0) {
+      notes.push(`fs scan exited ${fsRes.exitCode}: ${fsRes.stderr.slice(0, 120)}`);
+    }
+    if (fs.existsSync(fsOut)) {
       try {
-        allFindings.push(...parseTrivyData(JSON.parse(fs.readFileSync(imgOut, "utf-8")), image));
+        allFindings.push(...parseTrivyData(JSON.parse(fs.readFileSync(fsOut, "utf-8"))));
       } catch (err) {
-        notes.push(`image parse error: ${String(err).slice(0, 150)}`);
+        notes.push(`fs parse error: ${String(err).slice(0, 150)}`);
       }
     } else {
-      notes.push(`image scan produced no output: ${imgRes.stdout.slice(0, 150)}`);
+      notes.push(`fs scan produced no output: ${fsRes.stdout.slice(0, 150)}`);
     }
-  }
 
-  return {
-    engine: "trivy",
-    findings: allFindings,
-    available: true,
-    note: notes.length ? notes.join("; ") : undefined,
-  };
+    if (image) {
+      core.info(`trivy: scanning image "${image}"…`);
+      const imgOut = path.join(workdir, "trivy-image.json");
+      const imgRes = await run(bin, [
+        "image",
+        "--scanners",
+        "vuln",
+        "--format",
+        "json",
+        "--output",
+        imgOut,
+        "--quiet",
+        image,
+      ]);
+      if (imgRes.exitCode !== 0) {
+        notes.push(`image scan exited ${imgRes.exitCode}: ${imgRes.stderr.slice(0, 120)}`);
+      }
+      if (fs.existsSync(imgOut)) {
+        try {
+          allFindings.push(
+            ...parseTrivyData(JSON.parse(fs.readFileSync(imgOut, "utf-8")), image),
+          );
+        } catch (err) {
+          notes.push(`image parse error: ${String(err).slice(0, 150)}`);
+        }
+      } else {
+        notes.push(`image scan produced no output: ${imgRes.stdout.slice(0, 150)}`);
+      }
+    }
+
+    return {
+      engine: "trivy",
+      findings: allFindings,
+      status: notes.length ? "failed" : "success",
+      note: notes.length ? notes.join("; ") : undefined,
+    };
+  } finally {
+    fs.rmSync(workdir, { recursive: true, force: true });
+  }
 }

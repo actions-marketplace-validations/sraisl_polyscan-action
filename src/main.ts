@@ -2,7 +2,6 @@
 import * as core from "@actions/core";
 import * as fs from "fs";
 import * as path from "path";
-import { DefaultArtifactClient } from "@actions/artifact";
 
 import { Finding, EngineResult, countBySeverity } from "./schema";
 import { runSemgrep } from "./engines/semgrep";
@@ -17,6 +16,8 @@ import { toSarif } from "./sarif";
 import { toSbom } from "./sbom";
 import { renderSummary } from "./summary";
 import { resolveEngines, unknownEngines, ALL_ENGINES } from "./engines";
+import { normalizeFindingPath, resolveOutputDir, resolveTarget } from "./target";
+import { assertSupportedPlatform } from "./tools";
 
 function boolInput(name: string, def: boolean): boolean {
   const raw = core.getInput(name);
@@ -49,34 +50,38 @@ async function runEngine(name: string, target: string, trivyImage?: string): Pro
       case "gitleaks":
         return await runGitleaks(target);
       default:
-        return { engine: name, findings: [], available: false, note: "unknown engine" };
+        return { engine: name, findings: [], status: "failed", note: "unknown engine" };
     }
   } catch (err) {
     return {
       engine: name,
       findings: [],
-      available: false,
+      status: "failed",
       note: `engine crashed: ${String(err).slice(0, 200)}`,
     };
   }
 }
 
 async function main(): Promise<void> {
-  const target = core.getInput("target") || ".";
+  assertSupportedPlatform();
+  const targetInput = core.getInput("target") || ".";
   const engines = resolveEngines(core.getInput("engines"));
 
   const unknown = unknownEngines(engines);
-  for (const e of unknown) {
-    core.warning(`Unknown engine "${e}" will be skipped. Valid engines: ${ALL_ENGINES.join(", ")}`);
+  if (unknown.length > 0) {
+    throw new Error(
+      `Unknown engine(s): ${unknown.join(", ")}. Valid engines: ${ALL_ENGINES.join(", ")}`,
+    );
   }
-  const validEngines = engines.filter((e) => !unknown.includes(e));
+  const validEngines = engines;
 
   const gateEnforced = boolInput("gate", true);
+  const failOnEngineError = boolInput("fail-on-engine-error", true);
   const wantSarif = boolInput("sarif", true);
   const wantSbom = boolInput("sbom", false);
   const uploadArtifacts = boolInput("upload-artifacts", true);
   const uploadSarif = boolInput("upload-sarif", false);
-  const outputDir = core.getInput("output-dir") || ".";
+  const outputDirInput = core.getInput("output-dir") || ".";
   const trivyImage = core.getInput("trivy-image") || undefined;
 
   const gateCfg = {
@@ -85,6 +90,8 @@ async function main(): Promise<void> {
     maxMedium: intInput("max-medium", 50),
   };
 
+  const target = resolveTarget(targetInput);
+  const outputDir = resolveOutputDir(outputDirInput);
   core.info(`PolyScan scanning "${target}" with engines: ${validEngines.join(", ")}`);
 
   // Run engines sequentially (they install tools; parallel would race on pip/npm).
@@ -92,7 +99,18 @@ async function main(): Promise<void> {
   for (const e of validEngines) {
     core.startGroup(`Engine: ${e}`);
     const res = await runEngine(e, target, trivyImage);
-    core.info(`${e}: ${res.findings.length} findings (available=${res.available})`);
+    try {
+      res.findings = res.findings.map((finding) =>
+        finding.source?.startsWith("image:")
+          ? finding
+          : { ...finding, file: normalizeFindingPath(finding.file, target) },
+      );
+    } catch (err) {
+      res.findings = [];
+      res.status = "failed";
+      res.note = `invalid finding path: ${String(err).slice(0, 200)}`;
+    }
+    core.info(`${e}: ${res.findings.length} findings (status=${res.status})`);
     if (res.note) core.info(`note: ${res.note}`);
     core.endGroup();
     engineResults.push(res);
@@ -106,7 +124,6 @@ async function main(): Promise<void> {
   const counts = countBySeverity(findings);
   const gate = evaluateGate(findings, gateCfg);
 
-  fs.mkdirSync(path.resolve(outputDir), { recursive: true });
   const artifactFiles: string[] = [];
 
   // SARIF
@@ -144,6 +161,7 @@ async function main(): Promise<void> {
   // Upload artifacts
   if (uploadArtifacts && artifactFiles.length > 0) {
     try {
+      const { DefaultArtifactClient } = await import("@actions/artifact");
       const client = new DefaultArtifactClient();
       await client.uploadArtifact("polyscan-reports", artifactFiles, outputDir, {
         retentionDays: 30,
@@ -169,16 +187,30 @@ async function main(): Promise<void> {
   core.setOutput("high", String(counts.high));
   core.setOutput("medium", String(counts.medium));
   core.setOutput("low", String(counts.low));
+  core.setOutput("info", String(counts.info));
   core.setOutput("gate-passed", String(gate.passed));
+  const failedEngines = engineResults.filter((result) => result.status === "failed");
+  core.setOutput("engines-passed", String(failedEngines.length === 0));
+  core.setOutput("failed-engines", failedEngines.map((result) => result.engine).join(","));
 
   core.info(
     `Totals — critical:${counts.critical} high:${counts.high} medium:${counts.medium} low:${counts.low} total:${counts.total}`,
   );
 
+  const failures: string[] = [];
+  if (failOnEngineError && failedEngines.length > 0) {
+    failures.push(`engines failed: ${failedEngines.map((result) => result.engine).join(", ")}`);
+  } else if (failedEngines.length > 0) {
+    core.warning(`Engine failures ignored: ${failedEngines.map((result) => result.engine).join(", ")}`);
+  }
   if (gateEnforced && !gate.passed) {
-    core.setFailed(`Quality Gate failed: ${gate.reasons.join(", ")}`);
+    failures.push(`Quality Gate failed: ${gate.reasons.join(", ")}`);
   } else if (!gateEnforced && !gate.passed) {
     core.warning(`Quality Gate would have failed: ${gate.reasons.join(", ")} (not enforced)`);
+  }
+
+  if (failures.length > 0) {
+    core.setFailed(failures.join("; "));
   } else {
     core.info("Quality Gate passed.");
   }

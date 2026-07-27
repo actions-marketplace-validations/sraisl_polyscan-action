@@ -11,6 +11,14 @@ const SEV_EMOJI: Record<string, string> = {
   info: "⚪",
 };
 
+function tableCell(value: string): string {
+  return value.replace(/\r?\n/g, " ").replace(/\|/g, "\\|").trim();
+}
+
+function code(value: string): string {
+  return `\`${tableCell(value).replace(/`/g, "'")}\``;
+}
+
 export function renderSummary(
   findings: Finding[],
   counts: SeverityCounts,
@@ -36,9 +44,9 @@ export function renderSummary(
   // Engine status
   lines.push("### Engines");
   for (const e of engineResults) {
-    const status = e.available ? "✅" : "⚠️";
-    const note = e.note ? ` — _${e.note}_` : "";
-    lines.push(`- ${status} **${e.engine}**: ${e.findings.length} findings${e.available ? "" : note}`);
+    const icon = e.status === "success" ? "✅" : e.status === "skipped" ? "ℹ️" : "⚠️";
+    const note = e.note ? ` — _${tableCell(e.note)}_` : "";
+    lines.push(`- ${icon} **${tableCell(e.engine)}**: ${e.findings.length} findings (${e.status})${note}`);
   }
   lines.push("");
 
@@ -53,7 +61,7 @@ export function renderSummary(
     for (const f of secrets) {
       const cleanFile = f.file.replace(/^\.\//, "");
       const loc = f.line > 0 ? `${cleanFile}:${f.line}` : cleanFile;
-      lines.push(`| \`${f.ruleId}\` | \`${loc}\` | ${SEV_EMOJI[f.severity]} ${f.severity} |`);
+      lines.push(`| ${code(f.ruleId)} | ${code(loc)} | ${SEV_EMOJI[f.severity]} ${f.severity} |`);
     }
     lines.push("");
     lines.push("_gitleaks is run with `--redact`: secret values are masked by gitleaks at source and do not appear in logs or SARIF._");
@@ -64,13 +72,13 @@ export function renderSummary(
   const imageFindings = findings.filter((f) => f.source?.startsWith("image:"));
   if (imageFindings.length > 0) {
     const imageName = imageFindings[0].source!.slice("image:".length);
-    lines.push(`### 🐳 Container Image Scan (\`${imageName}\`)`);
+    lines.push(`### 🐳 Container Image Scan (${code(imageName)})`);
     lines.push("");
     lines.push("| Sev | CVE / Rule | Finding | Layer |");
     lines.push("|---|---|---|---|");
     for (const f of imageFindings) {
       const cwe = f.cwe ? ` (${f.cwe})` : "";
-      lines.push(`| ${SEV_EMOJI[f.severity]} ${f.severity} | \`${f.ruleId}\`${cwe} | ${f.message} | ${f.file} |`);
+      lines.push(`| ${SEV_EMOJI[f.severity]} ${f.severity} | ${code(f.ruleId)}${cwe} | ${tableCell(f.message)} | ${tableCell(f.file)} |`);
     }
     lines.push("");
   }
@@ -86,7 +94,7 @@ export function renderSummary(
       const loc = f.line > 0 ? `${cleanFile}:${f.line}` : cleanFile;
       const cwe = f.cwe ? ` (${f.cwe})` : "";
       lines.push(
-        `| ${SEV_EMOJI[f.severity]} ${f.severity} | \`${f.ruleId}\`${cwe} | \`${loc}\` | ${f.engine} |`,
+        `| ${SEV_EMOJI[f.severity]} ${f.severity} | ${code(f.ruleId)}${cwe} | ${code(loc)} | ${tableCell(f.engine)} |`,
       );
     }
     if (findings.length > shown.length) {

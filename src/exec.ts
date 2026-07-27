@@ -1,6 +1,9 @@
 // Shared helper to run an external command and capture stdout/stderr,
 // tolerating non-zero exit codes (linters exit non-zero when they find issues).
 import * as exec from "@actions/exec";
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
 
 export interface RunResult {
   exitCode: number;
@@ -48,38 +51,42 @@ export async function which(tool: string): Promise<boolean> {
   return res.exitCode === 0;
 }
 
-// Install a Python CLI tool robustly on any runner.
-//
-// Newer distros (PEP 668) mark Python as "externally-managed", so a bare
-// `pip install <tool>` fails with "error: externally-managed-environment".
-// We try escalating fallbacks:
-//   1. `pip install --user`                  (preferred, no system mutation)
-//   2. `pip install --break-system-packages` (self-hosted runners, PEP 668)
-//   3. a local venv in /tmp                   (last resort)
-// Returns true if the tool ends up on PATH (also exports ~/.local/bin).
+export interface PreparedTool {
+  executable: string;
+  cleanup: () => void;
+}
+
+// Python virtual environments contain absolute shebangs and cannot be moved
+// into the tool cache. Keep the isolated environment alive for exactly one scan.
 export async function ensurePythonTool(
   tool: string,
+  version: string,
   label: string,
   core: { info: (s: string) => void; warning: (s: string) => void },
-): Promise<boolean> {
-  if (await which(tool)) return true;
-  core.info(`${label} not found — installing via pip…`);
-  const script = [
-    "set -e",
-    "PIP=$(command -v pip || command -v pip3 || true)",
-    'if [ -z "$PIP" ]; then echo "no pip available"; exit 1; fi',
-    'if [ -n "$VIRTUAL_ENV" ]; then "$PIP" install --quiet ' + tool + "; exit 0; fi",
-    'if "$PIP" install --user --quiet ' + tool + " 2>/dev/null; then echo installed-user; exit 0; fi",
-    'if "$PIP" install --break-system-packages --quiet ' + tool + " 2>/dev/null; then echo installed-break; exit 0; fi",
-    "python3 -m venv /tmp/polyscan-pyvenv && /tmp/polyscan-pyvenv/bin/pip install --quiet " + tool,
-  ].join("\n");
-  const res = await run("bash", ["-lc", script]);
-  if (res.exitCode !== 0) {
-    core.warning(`${label} install failed: ${res.stderr.slice(0, 300)}`);
-    return false;
+): Promise<PreparedTool | null> {
+  if (await which(tool)) return { executable: tool, cleanup: () => undefined };
+
+  core.info(`${label} not found — installing ${tool}==${version} in an isolated environment…`);
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), `polyscan-${tool}-`));
+  try {
+    const venv = path.join(directory, "venv");
+    const create = await run("python3", ["-m", "venv", venv]);
+    if (create.exitCode !== 0) throw new Error(create.stderr || "could not create Python venv");
+    const install = await run(path.join(venv, "bin", "pip"), [
+      "install",
+      "--quiet",
+      `${tool}==${version}`,
+    ]);
+    if (install.exitCode !== 0) throw new Error(install.stderr || "pip install failed");
+    const executable = path.join(venv, "bin", tool);
+    if (!fs.existsSync(executable)) throw new Error(`${tool} executable missing after install`);
+    return {
+      executable,
+      cleanup: () => fs.rmSync(directory, { recursive: true, force: true }),
+    };
+  } catch (err) {
+    fs.rmSync(directory, { recursive: true, force: true });
+    core.warning(`${label} install failed: ${String(err).slice(0, 300)}`);
+    return null;
   }
-  // Ensure ~/.local/bin (used by --user installs) is on PATH for later steps.
-  const home = process.env.HOME ?? "";
-  if (home) process.env.PATH = `${home}/.local/bin:${process.env.PATH ?? ""}`;
-  return which(tool);
 }

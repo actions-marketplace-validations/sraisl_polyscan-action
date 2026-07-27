@@ -7,9 +7,11 @@ import * as path from "path";
 import { Finding, EngineResult, Severity } from "../schema";
 import { run, which } from "../exec";
 import { resolveTarget } from "../target";
+import { cachedTool, downloadVerified } from "../tools";
 
 const DETEKT_VERSION = "1.23.7";
 const DETEKT_URL = `https://github.com/detekt/detekt/releases/download/v${DETEKT_VERSION}/detekt-cli-${DETEKT_VERSION}-all.jar`;
+const DETEKT_SHA256 = "84beded283012cb2b38bcaef4996452fcd6069d2e9ca74b50eaa79e0ad21897e";
 
 // detekt SARIF levels: error/warning/note → map to our severities.
 function mapSeverity(level: string, ruleId: string): Severity {
@@ -71,44 +73,63 @@ export function parseDetektSarif(sarif: unknown, abs: string): Finding[] {
 export async function runDetekt(target: string): Promise<EngineResult> {
   const abs = resolveTarget(target);
   if (!findKotlinFiles(abs)) {
-    return { engine: "detekt", findings: [], available: true, note: "no .kt files found" };
+    return { engine: "detekt", findings: [], status: "skipped", note: "no .kt files found" };
   }
   if (!(await which("java"))) {
-    return { engine: "detekt", findings: [], available: false, note: "java not available" };
+    return { engine: "detekt", findings: [], status: "failed", note: "java not available" };
   }
 
   const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "polyscan-detekt-"));
-  const jar = path.join(workdir, "detekt-cli.jar");
-  core.info(`Downloading detekt v${DETEKT_VERSION}…`);
-  const dl = await run("bash", [
-    "-lc",
-    `curl -sSL -o "${jar}" "${DETEKT_URL}"`,
-  ]);
-  if (dl.exitCode !== 0 || !fs.existsSync(jar)) {
-    return { engine: "detekt", findings: [], available: false, note: `detekt download failed: ${dl.stderr.slice(0, 200)}` };
-  }
-
-  const sarifOut = path.join(workdir, "detekt.sarif");
-  // --build-upon-default-config keeps the default ruleset; --all-rules enables extra (incl. security-adjacent) rules.
-  const res = await run("java", [
-    "-jar",
-    jar,
-    "--input",
-    abs,
-    "--report",
-    `sarif:${sarifOut}`,
-    "--build-upon-default-config",
-    "--all-rules",
-  ]);
-
-  if (!fs.existsSync(sarifOut)) {
-    return { engine: "detekt", findings: [], available: false, note: `detekt produced no output: ${res.stdout.slice(0, 200)}` };
-  }
-
   try {
-    const sarif = JSON.parse(fs.readFileSync(sarifOut, "utf-8"));
-    return { engine: "detekt", findings: parseDetektSarif(sarif, abs), available: true };
-  } catch (err) {
-    return { engine: "detekt", findings: [], available: true, note: `parse error: ${String(err).slice(0, 200)}` };
+    let jar: string;
+    try {
+      jar = await cachedTool("detekt", DETEKT_VERSION, "detekt-cli.jar", async (directory) => {
+        const downloaded = await downloadVerified(DETEKT_URL, DETEKT_SHA256);
+        fs.copyFileSync(downloaded, path.join(directory, "detekt-cli.jar"));
+      });
+    } catch (err) {
+      return {
+        engine: "detekt",
+        findings: [],
+        status: "failed",
+        note: `detekt download failed: ${String(err).slice(0, 200)}`,
+      };
+    }
+
+    const sarifOut = path.join(workdir, "detekt.sarif");
+    // --build-upon-default-config keeps defaults; --all-rules enables additional rules.
+    const res = await run("java", [
+      "-jar",
+      jar,
+      "--input",
+      abs,
+      "--report",
+      `sarif:${sarifOut}`,
+      "--build-upon-default-config",
+      "--all-rules",
+    ]);
+
+    if (!fs.existsSync(sarifOut)) {
+      return {
+        engine: "detekt",
+        findings: [],
+        status: "failed",
+        note: `detekt produced no output: ${(res.stderr || res.stdout).slice(0, 200)}`,
+      };
+    }
+
+    try {
+      const sarif = JSON.parse(fs.readFileSync(sarifOut, "utf-8"));
+      return { engine: "detekt", findings: parseDetektSarif(sarif, abs), status: "success" };
+    } catch (err) {
+      return {
+        engine: "detekt",
+        findings: [],
+        status: "failed",
+        note: `parse error: ${String(err).slice(0, 200)}`,
+      };
+    }
+  } finally {
+    fs.rmSync(workdir, { recursive: true, force: true });
   }
 }

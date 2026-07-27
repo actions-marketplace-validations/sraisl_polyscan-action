@@ -4,6 +4,8 @@ import { Finding, EngineResult, Severity } from "../schema";
 import { run, which, ensurePythonTool } from "../exec";
 import { resolveTarget } from "../target";
 
+const SEMGREP_VERSION = "1.170.0";
+
 function mapSeverity(s: string): Severity {
   switch ((s || "").toUpperCase()) {
     case "ERROR":
@@ -17,8 +19,8 @@ function mapSeverity(s: string): Severity {
   }
 }
 
-async function ensureInstalled(): Promise<boolean> {
-  return ensurePythonTool("semgrep", "semgrep", core);
+async function ensureInstalled() {
+  return ensurePythonTool("semgrep", SEMGREP_VERSION, "semgrep", core);
 }
 
 export function parseSemgrepJson(stdout: string): Finding[] {
@@ -43,41 +45,53 @@ export function parseSemgrepJson(stdout: string): Finding[] {
 }
 
 export async function runSemgrep(target: string): Promise<EngineResult> {
-  const ok = await ensureInstalled();
-  if (!ok) {
-    return { engine: "semgrep", findings: [], available: false, note: "semgrep not installed" };
+  const tool = await ensureInstalled();
+  if (!tool) {
+    return { engine: "semgrep", findings: [], status: "failed", note: "semgrep not installed" };
   }
-  const abs = resolveTarget(target);
-
-  const res = await run("semgrep", [
-    "--config",
-    "auto",
-    "--json",
-    "--quiet",
-    "--no-git-ignore",
-    abs,
-  ]);
-
-  if (!res.stdout.trim()) {
-    return {
-      engine: "semgrep",
-      findings: [],
-      available: true,
-      note: res.stderr.slice(0, 300),
-    };
-  }
-
-  let findings: Finding[];
   try {
-    findings = parseSemgrepJson(res.stdout);
-  } catch (err) {
-    return {
-      engine: "semgrep",
-      findings: [],
-      available: true,
-      note: `parse error: ${String(err).slice(0, 200)}`,
-    };
-  }
+    const abs = resolveTarget(target);
 
-  return { engine: "semgrep", findings, available: true };
+    const res = await run(tool.executable, [
+      "--config",
+      "auto",
+      "--json",
+      "--quiet",
+      "--no-git-ignore",
+      abs,
+    ]);
+    if (res.exitCode !== 0) {
+      return {
+        engine: "semgrep",
+        findings: [],
+        status: "failed",
+        note: res.stderr.slice(0, 300) || `semgrep exited ${res.exitCode}`,
+      };
+    }
+
+    if (!res.stdout.trim()) {
+      return {
+        engine: "semgrep",
+        findings: [],
+        status: "failed",
+        note: res.stderr.slice(0, 300) || "semgrep produced no output",
+      };
+    }
+
+    let findings: Finding[];
+    try {
+      findings = parseSemgrepJson(res.stdout);
+    } catch (err) {
+      return {
+        engine: "semgrep",
+        findings: [],
+        status: "failed",
+        note: `parse error: ${String(err).slice(0, 200)}`,
+      };
+    }
+
+    return { engine: "semgrep", findings, status: "success" };
+  } finally {
+    tool.cleanup();
+  }
 }

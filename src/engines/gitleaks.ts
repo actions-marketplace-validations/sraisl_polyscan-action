@@ -4,11 +4,14 @@ import * as core from "@actions/core";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import * as tc from "@actions/tool-cache";
 import { Finding, EngineResult, Severity } from "../schema";
 import { run, which } from "../exec";
 import { resolveTarget } from "../target";
+import { cachedTool, downloadVerified } from "../tools";
 
 const GITLEAKS_VERSION = "8.21.0";
+const GITLEAKS_SHA256 = "6c3a240509647225997d31df06e872350e1c0fe2fb85d323ae29a9fef0012586";
 
 // gitleaks severities in its SARIF are "Critical"/"High"/"Low"/"Info"; map to ours.
 function mapSeverity(level: string): Severity {
@@ -54,58 +57,59 @@ export function parseGitleaksSarif(sarif: unknown, abs: string): Finding[] {
 export async function runGitleaks(target: string): Promise<EngineResult> {
   const abs = resolveTarget(target);
   const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "polyscan-gitleaks-"));
-  const bin = await ensureGitleaks(workdir);
-  if (!bin) {
-    return { engine: "gitleaks", findings: [], available: false, note: "gitleaks not installed" };
-  }
-
-  const sarifOut = path.join(workdir, "gitleaks.sarif");
-  // Scan full git history + uncommitted; --no-banner.
-  // --redact makes gitleaks mask the actual secret value in its own SARIF output before
-  // PolyScan reads it, so no plaintext secrets ever enter PolyScan's logs or reports.
-  // gitleaks scans the git repo rooted at the current directory, so run it
-  // with the target as cwd.
-  const res = await run(
-    bin,
-    ["detect", "--report-format", "sarif", "--report-path", sarifOut, "--no-banner", "--redact"],
-    { cwd: abs },
-  );
-
-  if (!fs.existsSync(sarifOut)) {
-    return {
-      engine: "gitleaks",
-      findings: [],
-      available: false,
-      note: `gitleaks produced no report: ${res.stdout.slice(0, 200)}`,
-    };
-  }
-
   try {
-    const sarif = JSON.parse(fs.readFileSync(sarifOut, "utf-8"));
-    return { engine: "gitleaks", findings: parseGitleaksSarif(sarif, abs), available: true };
-  } catch (err) {
-    return { engine: "gitleaks", findings: [], available: true, note: `parse error: ${String(err).slice(0, 200)}` };
+    const bin = await ensureGitleaks();
+    if (!bin) {
+      return { engine: "gitleaks", findings: [], status: "failed", note: "gitleaks not installed" };
+    }
+
+    const sarifOut = path.join(workdir, "gitleaks.sarif");
+    // Redaction happens before PolyScan reads the report, so secrets never enter its output.
+    const res = await run(
+      bin,
+      ["detect", "--report-format", "sarif", "--report-path", sarifOut, "--no-banner", "--redact"],
+      { cwd: abs },
+    );
+
+    if (!fs.existsSync(sarifOut)) {
+      return {
+        engine: "gitleaks",
+        findings: [],
+        status: "failed",
+        note: `gitleaks produced no report: ${(res.stderr || res.stdout).slice(0, 200)}`,
+      };
+    }
+
+    try {
+      const sarif = JSON.parse(fs.readFileSync(sarifOut, "utf-8"));
+      return { engine: "gitleaks", findings: parseGitleaksSarif(sarif, abs), status: "success" };
+    } catch (err) {
+      return {
+        engine: "gitleaks",
+        findings: [],
+        status: "failed",
+        note: `parse error: ${String(err).slice(0, 200)}`,
+      };
+    }
+  } finally {
+    fs.rmSync(workdir, { recursive: true, force: true });
   }
 }
 
-async function ensureGitleaks(workdir: string): Promise<string | null> {
+async function ensureGitleaks(): Promise<string | null> {
   if (await which("gitleaks")) return "gitleaks";
   core.info(`gitleaks not found — downloading v${GITLEAKS_VERSION}…`);
-  const url = `https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz`;
-  const res = await run("bash", [
-    "-lc",
-    [
-      "set -e",
-      `cd ${workdir}`,
-      `curl -sSL -o gitleaks.tar.gz "${url}"`,
-      "tar xzf gitleaks.tar.gz",
-      "chmod +x gitleaks",
-    ].join("\n"),
-  ]);
-  const bin = path.join(workdir, "gitleaks");
-  if (res.exitCode !== 0 || !fs.existsSync(bin)) {
-    core.warning(`gitleaks download failed: ${res.stderr.slice(0, 200)}`);
+  try {
+    return await cachedTool("gitleaks", GITLEAKS_VERSION, "gitleaks", async (directory) => {
+      const archive = await downloadVerified(
+        `https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz`,
+        GITLEAKS_SHA256,
+      );
+      await tc.extractTar(archive, directory);
+      fs.chmodSync(path.join(directory, "gitleaks"), 0o755);
+    });
+  } catch (err) {
+    core.warning(`gitleaks download failed: ${String(err).slice(0, 200)}`);
     return null;
   }
-  return bin;
 }
