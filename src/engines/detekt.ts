@@ -1,9 +1,8 @@
 // detekt engine adapter — Kotlin-native static analysis (code security + quality).
 // Runs the detekt CLI (downloaded on demand) with the SARIF report and parses it.
-import * as core from "@actions/core";
-import * as fs from "fs";
-import * as os from "os";
-import * as path from "path";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { Finding, EngineResult, Severity } from "../schema";
 import { run, which } from "../exec";
 import { resolveTarget } from "../target";

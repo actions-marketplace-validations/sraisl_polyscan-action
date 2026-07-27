@@ -1,7 +1,7 @@
 // Bandit engine adapter (Python security linter).
 import * as core from "@actions/core";
 import { Finding, EngineResult, Severity } from "../schema";
-import { run, which, ensurePythonTool } from "../exec";
+import { run, ensurePythonTool } from "../exec";
 import { resolveTarget } from "../target";
 
 const BANDIT_VERSION = "1.9.4";

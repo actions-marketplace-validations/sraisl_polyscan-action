@@ -1,7 +1,7 @@
 // PolyScan GitHub Action — entry point.
 import * as core from "@actions/core";
-import * as fs from "fs";
-import * as path from "path";
+import * as fs from "node:fs";
+import * as path from "node:path";
 
 import { Finding, EngineResult, countBySeverity } from "./schema";
 import { runSemgrep } from "./engines/semgrep";
@@ -28,8 +28,54 @@ function boolInput(name: string, def: boolean): boolean {
 function intInput(name: string, def: number): number {
   const raw = core.getInput(name);
   if (raw === "") return def;
-  const n = parseInt(raw, 10);
+  const n = Number.parseInt(raw, 10);
   return Number.isNaN(n) ? def : n;
+}
+
+interface ActionConfig {
+  target: string;
+  engines: string[];
+  gateEnforced: boolean;
+  failOnEngineError: boolean;
+  wantSarif: boolean;
+  wantSbom: boolean;
+  uploadArtifacts: boolean;
+  uploadSarif: boolean;
+  outputDir: string;
+  trivyImage?: string;
+  gate: {
+    maxCritical: number;
+    maxHigh: number;
+    maxMedium: number;
+  };
+}
+
+function readConfig(): ActionConfig {
+  const engines = resolveEngines(core.getInput("engines"));
+  const unknown = unknownEngines(engines);
+  if (unknown.length > 0) {
+    throw new Error(
+      `Unknown engine(s): ${unknown.join(", ")}. Valid engines: ${ALL_ENGINES.join(", ")}`,
+    );
+  }
+
+  return {
+    target: resolveTarget(core.getInput("target") || "."),
+    engines,
+    gateEnforced: boolInput("gate", true),
+    failOnEngineError: boolInput("fail-on-engine-error", true),
+    wantSarif: boolInput("sarif", true),
+    wantSbom: boolInput("sbom", false),
+    uploadArtifacts: boolInput("upload-artifacts", true),
+    uploadSarif: boolInput("upload-sarif", false),
+    outputDir: resolveOutputDir(core.getInput("output-dir") || "."),
+    trivyImage: core.getInput("trivy-image") || undefined,
+    gate: {
+      maxCritical: intInput("max-critical", 0),
+      maxHigh: intInput("max-high", 0),
+      maxMedium: intInput("max-medium", 50),
+    },
+  };
 }
 
 async function runEngine(name: string, target: string, trivyImage?: string): Promise<EngineResult> {
@@ -62,141 +108,117 @@ async function runEngine(name: string, target: string, trivyImage?: string): Pro
   }
 }
 
-async function main(): Promise<void> {
-  assertSupportedPlatform();
-  const targetInput = core.getInput("target") || ".";
-  const engines = resolveEngines(core.getInput("engines"));
-
-  const unknown = unknownEngines(engines);
-  if (unknown.length > 0) {
-    throw new Error(
-      `Unknown engine(s): ${unknown.join(", ")}. Valid engines: ${ALL_ENGINES.join(", ")}`,
+function normalizeEngineFindings(result: EngineResult, target: string): void {
+  try {
+    result.findings = result.findings.map((finding) =>
+      finding.source?.startsWith("image:")
+        ? finding
+        : { ...finding, file: normalizeFindingPath(finding.file, target) },
     );
+  } catch (err) {
+    result.findings = [];
+    result.status = "failed";
+    result.note = `invalid finding path: ${String(err).slice(0, 200)}`;
   }
-  const validEngines = engines;
+}
 
-  const gateEnforced = boolInput("gate", true);
-  const failOnEngineError = boolInput("fail-on-engine-error", true);
-  const wantSarif = boolInput("sarif", true);
-  const wantSbom = boolInput("sbom", false);
-  const uploadArtifacts = boolInput("upload-artifacts", true);
-  const uploadSarif = boolInput("upload-sarif", false);
-  const outputDirInput = core.getInput("output-dir") || ".";
-  const trivyImage = core.getInput("trivy-image") || undefined;
-
-  const gateCfg = {
-    maxCritical: intInput("max-critical", 0),
-    maxHigh: intInput("max-high", 0),
-    maxMedium: intInput("max-medium", 50),
-  };
-
-  const target = resolveTarget(targetInput);
-  const outputDir = resolveOutputDir(outputDirInput);
-  core.info(`PolyScan scanning "${target}" with engines: ${validEngines.join(", ")}`);
-
-  // Run engines sequentially (they install tools; parallel would race on pip/npm).
+async function runEngines(config: ActionConfig): Promise<EngineResult[]> {
   const engineResults: EngineResult[] = [];
-  for (const e of validEngines) {
-    core.startGroup(`Engine: ${e}`);
-    const res = await runEngine(e, target, trivyImage);
-    try {
-      res.findings = res.findings.map((finding) =>
-        finding.source?.startsWith("image:")
-          ? finding
-          : { ...finding, file: normalizeFindingPath(finding.file, target) },
-      );
-    } catch (err) {
-      res.findings = [];
-      res.status = "failed";
-      res.note = `invalid finding path: ${String(err).slice(0, 200)}`;
-    }
-    core.info(`${e}: ${res.findings.length} findings (status=${res.status})`);
-    if (res.note) core.info(`note: ${res.note}`);
+  for (const engine of config.engines) {
+    core.startGroup(`Engine: ${engine}`);
+    const result = await runEngine(engine, config.target, config.trivyImage);
+    normalizeEngineFindings(result, config.target);
+    core.info(`${engine}: ${result.findings.length} findings (status=${result.status})`);
+    if (result.note) core.info(`note: ${result.note}`);
     core.endGroup();
-    engineResults.push(res);
+    engineResults.push(result);
   }
+  return engineResults;
+}
 
-  const findings: Finding[] = engineResults.flatMap((r) => r.findings);
-  // Sort by severity rank then engine.
+function sortedFindings(engineResults: EngineResult[]): Finding[] {
+  const findings = engineResults.flatMap((result) => result.findings);
   const rank: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
   findings.sort((a, b) => rank[a.severity] - rank[b.severity] || a.engine.localeCompare(b.engine));
+  return findings;
+}
 
-  const counts = countBySeverity(findings);
-  const gate = evaluateGate(findings, gateCfg);
-
+function writeReports(
+  config: ActionConfig,
+  findings: Finding[],
+  summary: string,
+): { files: string[]; sarifPath: string } {
   const artifactFiles: string[] = [];
-
-  // SARIF
   let sarifPath = "";
-  if (wantSarif) {
-    sarifPath = path.join(outputDir, "polyscan.sarif");
+  if (config.wantSarif) {
+    sarifPath = path.join(config.outputDir, "polyscan.sarif");
     fs.writeFileSync(sarifPath, toSarif(findings));
     core.info(`Wrote SARIF: ${sarifPath}`);
     artifactFiles.push(sarifPath);
     core.setOutput("sarif-file", sarifPath);
   }
 
-  // SBOM
-  let sbomPath = "";
-  if (wantSbom) {
-    sbomPath = path.join(outputDir, "polyscan.sbom.json");
-    fs.writeFileSync(sbomPath, toSbom(target));
+  if (config.wantSbom) {
+    const sbomPath = path.join(config.outputDir, "polyscan.sbom.json");
+    fs.writeFileSync(sbomPath, toSbom(config.target));
     core.info(`Wrote SBOM: ${sbomPath}`);
     artifactFiles.push(sbomPath);
     core.setOutput("sbom-file", sbomPath);
   }
 
-  // Job summary
-  const summaryMd = renderSummary(findings, counts, gate, gateEnforced, engineResults);
+  const summaryPath = path.join(config.outputDir, "polyscan-summary.md");
+  fs.writeFileSync(summaryPath, summary);
+  artifactFiles.push(summaryPath);
+  return { files: artifactFiles, sarifPath };
+}
+
+async function publishSummary(summary: string): Promise<void> {
   try {
-    await core.summary.addRaw(summaryMd).write();
+    await core.summary.addRaw(summary).write();
   } catch (err) {
     core.warning(`could not write job summary: ${String(err).slice(0, 150)}`);
   }
-  // Also emit a summary file for consumers who want it as an artifact.
-  const summaryPath = path.join(outputDir, "polyscan-summary.md");
-  fs.writeFileSync(summaryPath, summaryMd);
-  artifactFiles.push(summaryPath);
+}
 
-  // Upload artifacts
-  if (uploadArtifacts && artifactFiles.length > 0) {
-    try {
-      const { DefaultArtifactClient } = await import("@actions/artifact");
-      const client = new DefaultArtifactClient();
-      await client.uploadArtifact("polyscan-reports", artifactFiles, outputDir, {
-        retentionDays: 30,
-      });
-      core.info(`Uploaded ${artifactFiles.length} report artifact(s).`);
-    } catch (err) {
-      core.warning(`artifact upload failed: ${String(err).slice(0, 200)}`);
-    }
+async function uploadReports(files: string[], outputDir: string): Promise<void> {
+  try {
+    const { DefaultArtifactClient } = await import("@actions/artifact");
+    const client = new DefaultArtifactClient();
+    await client.uploadArtifact("polyscan-reports", files, outputDir, { retentionDays: 30 });
+    core.info(`Uploaded ${files.length} report artifact(s).`);
+  } catch (err) {
+    core.warning(`artifact upload failed: ${String(err).slice(0, 200)}`);
   }
+}
 
-  // Upload SARIF to code scanning (delegated hint — actual upload via separate step
-  // is recommended, but we support it if the CodeQL upload tool is present).
-  if (uploadSarif && sarifPath) {
-    core.info(
-      "upload-sarif=true: use a follow-up 'github/codeql-action/upload-sarif' step " +
-        `with sarif_file: ${sarifPath} (needs security-events: write).`,
-    );
-  }
-
-  // Outputs
+function setOutputs(
+  findings: Finding[],
+  engineResults: EngineResult[],
+  gatePassed: boolean,
+): EngineResult[] {
+  const counts = countBySeverity(findings);
   core.setOutput("total", String(counts.total));
   core.setOutput("critical", String(counts.critical));
   core.setOutput("high", String(counts.high));
   core.setOutput("medium", String(counts.medium));
   core.setOutput("low", String(counts.low));
   core.setOutput("info", String(counts.info));
-  core.setOutput("gate-passed", String(gate.passed));
+  core.setOutput("gate-passed", String(gatePassed));
   const failedEngines = engineResults.filter((result) => result.status === "failed");
   core.setOutput("engines-passed", String(failedEngines.length === 0));
   core.setOutput("failed-engines", failedEngines.map((result) => result.engine).join(","));
-
   core.info(
     `Totals — critical:${counts.critical} high:${counts.high} medium:${counts.medium} low:${counts.low} total:${counts.total}`,
   );
+  return failedEngines;
+}
 
+function enforceResults(
+  failedEngines: EngineResult[],
+  failOnEngineError: boolean,
+  gateEnforced: boolean,
+  gate: ReturnType<typeof evaluateGate>,
+): void {
   const failures: string[] = [];
   if (failOnEngineError && failedEngines.length > 0) {
     failures.push(`engines failed: ${failedEngines.map((result) => result.engine).join(", ")}`);
@@ -214,6 +236,33 @@ async function main(): Promise<void> {
   } else {
     core.info("Quality Gate passed.");
   }
+}
+
+async function main(): Promise<void> {
+  assertSupportedPlatform();
+  const config = readConfig();
+  core.info(`PolyScan scanning "${config.target}" with engines: ${config.engines.join(", ")}`);
+
+  const engineResults = await runEngines(config);
+  const findings = sortedFindings(engineResults);
+  const counts = countBySeverity(findings);
+  const gate = evaluateGate(findings, config.gate);
+  const summary = renderSummary(findings, counts, gate, config.gateEnforced, engineResults);
+
+  await publishSummary(summary);
+  const reports = writeReports(config, findings, summary);
+  if (config.uploadArtifacts && reports.files.length > 0) {
+    await uploadReports(reports.files, config.outputDir);
+  }
+  if (config.uploadSarif && reports.sarifPath) {
+    core.info(
+      "upload-sarif=true: use a follow-up 'github/codeql-action/upload-sarif' step " +
+        `with sarif_file: ${reports.sarifPath} (needs security-events: write).`,
+    );
+  }
+
+  const failedEngines = setOutputs(findings, engineResults, gate.passed);
+  enforceResults(failedEngines, config.failOnEngineError, config.gateEnforced, gate);
 }
 
 main().catch((err) => {

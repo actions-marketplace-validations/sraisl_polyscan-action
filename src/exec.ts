@@ -1,9 +1,9 @@
 // Shared helper to run an external command and capture stdout/stderr,
 // tolerating non-zero exit codes (linters exit non-zero when they find issues).
 import * as exec from "@actions/exec";
-import * as fs from "fs";
-import * as os from "os";
-import * as path from "path";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 
 export interface RunResult {
   exitCode: number;

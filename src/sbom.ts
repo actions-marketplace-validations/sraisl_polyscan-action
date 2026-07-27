@@ -2,9 +2,9 @@
 // Reads exact dependency versions from lock files when available,
 // falling back to manifest files for projects without lock files.
 // Supported: package-lock.json (v1/v2/v3), Pipfile.lock, requirements.txt, package.json, pom.xml.
-import * as fs from "fs";
-import * as path from "path";
-import * as crypto from "crypto";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import * as crypto from "node:crypto";
 import pkg from "../package.json";
 
 interface Component {
@@ -12,6 +12,11 @@ interface Component {
   name: string;
   version: string;
   purl: string;
+}
+
+interface NpmLockPackage {
+  version?: string;
+  link?: boolean;
 }
 
 // npm: prefer package-lock.json (exact transitive deps) over package.json.
@@ -31,24 +36,30 @@ function detectNpmLock(target: string, comps: Component[]): boolean {
     };
     const seen = new Set<string>();
     if ((lock.lockfileVersion ?? 1) >= 2 && lock.packages) {
-      // v2/v3: flat packages map, keys like "node_modules/foo" or "node_modules/x/node_modules/foo"
-      for (const [key, pkg] of Object.entries(lock.packages)) {
-        if (!key || pkg.link) continue; // skip root ("") and symlinks
-        const lastIdx = key.lastIndexOf("node_modules/");
-        const name = lastIdx >= 0 ? key.slice(lastIdx + "node_modules/".length) : key;
-        const version = pkg.version ?? "unknown";
-        const id = `${name}@${version}`;
-        if (seen.has(id)) continue;
-        seen.add(id);
-        comps.push({ type: "library", name, version, purl: `pkg:npm/${name}@${version}` });
-      }
+      collectNpmLockPackages(lock.packages, comps, seen);
     } else if (lock.dependencies) {
-      // v1: nested dependencies object
       collectNpmV1Deps(lock.dependencies, comps, seen);
     }
     return true;
   } catch {
     return false;
+  }
+}
+
+function collectNpmLockPackages(
+  packages: Record<string, NpmLockPackage>,
+  comps: Component[],
+  seen: Set<string>,
+): void {
+  for (const [key, npmPackage] of Object.entries(packages)) {
+    if (!key || npmPackage.link) continue;
+    const lastIndex = key.lastIndexOf("node_modules/");
+    const name = lastIndex >= 0 ? key.slice(lastIndex + "node_modules/".length) : key;
+    const version = npmPackage.version ?? "unknown";
+    const id = `${name}@${version}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    comps.push({ type: "library", name, version, purl: `pkg:npm/${name}@${version}` });
   }
 }
 
@@ -79,7 +90,7 @@ function detectNpmManifest(target: string, comps: Component[]): void {
   if (!fs.existsSync(pkgPath)) return;
   try {
     const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
-    const deps = { ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) };
+    const deps = { ...pkg.dependencies, ...pkg.devDependencies };
     for (const [name, ver] of Object.entries(deps)) {
       const version = String(ver).replace(/[^0-9.]/g, "") || "0.0.0";
       comps.push({
@@ -131,7 +142,7 @@ function detectPipRequirements(target: string, comps: Component[]): void {
   for (const raw of lines) {
     const line = raw.trim();
     if (!line || line.startsWith("#")) continue;
-    const m = /^([A-Za-z0-9_.\-]+)\s*(?:==|>=|<=|~=)?\s*([0-9][A-Za-z0-9.\-]*)?/.exec(line);
+    const m = /^([\w.-]+)\s*(?:==|>=|<=|~=)?\s*(\d[\w.-]*)?/.exec(line);
     if (!m) continue;
     const name = m[1];
     const version = m[2] ?? "unknown";
@@ -145,7 +156,7 @@ function detectPipRequirements(target: string, comps: Component[]): void {
 }
 
 function xmlText(block: string, tag: string): string | undefined {
-  const match = new RegExp(`<${tag}>\\s*([^<]+?)\\s*</${tag}>`).exec(block);
+  const match = new RegExp(String.raw`<${tag}>\s*([^<]+?)\s*</${tag}>`).exec(block);
   return match?.[1]?.trim();
 }
 

@@ -34675,9 +34675,11 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.parseDetektSarif = parseDetektSarif;
 exports.runDetekt = runDetekt;
-const fs = __importStar(__nccwpck_require__(9896));
-const os = __importStar(__nccwpck_require__(857));
-const path = __importStar(__nccwpck_require__(6928));
+// detekt engine adapter — Kotlin-native static analysis (code security + quality).
+// Runs the detekt CLI (downloaded on demand) with the SARIF report and parses it.
+const fs = __importStar(__nccwpck_require__(3024));
+const os = __importStar(__nccwpck_require__(8161));
+const path = __importStar(__nccwpck_require__(6760));
 const exec_1 = __nccwpck_require__(3190);
 const target_1 = __nccwpck_require__(6746);
 const tools_1 = __nccwpck_require__(1732);
@@ -34844,9 +34846,11 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.parseEslintJson = parseEslintJson;
 exports.runEslint = runEslint;
-const fs = __importStar(__nccwpck_require__(9896));
-const os = __importStar(__nccwpck_require__(857));
-const path = __importStar(__nccwpck_require__(6928));
+// ESLint engine adapter for JS/TS security-relevant rules.
+// Uses a minimal flat config with no-eval / no-implied-eval and scans *.js/*.ts.
+const fs = __importStar(__nccwpck_require__(3024));
+const os = __importStar(__nccwpck_require__(8161));
+const path = __importStar(__nccwpck_require__(6760));
 const exec_1 = __nccwpck_require__(3190);
 const target_1 = __nccwpck_require__(6746);
 const tools_1 = __nccwpck_require__(1732);
@@ -34993,9 +34997,9 @@ exports.runGitleaks = runGitleaks;
 // gitleaks engine adapter — secret / credential detection in git history + working tree.
 // Downloads the gitleaks binary on demand and parses its SARIF report.
 const core = __importStar(__nccwpck_require__(7484));
-const fs = __importStar(__nccwpck_require__(9896));
-const os = __importStar(__nccwpck_require__(857));
-const path = __importStar(__nccwpck_require__(6928));
+const fs = __importStar(__nccwpck_require__(3024));
+const os = __importStar(__nccwpck_require__(8161));
+const path = __importStar(__nccwpck_require__(6760));
 const tc = __importStar(__nccwpck_require__(3472));
 const exec_1 = __nccwpck_require__(3190);
 const target_1 = __nccwpck_require__(6746);
@@ -35079,7 +35083,7 @@ async function ensureGitleaks() {
         return await (0, tools_1.cachedTool)("gitleaks", GITLEAKS_VERSION, "gitleaks", async (directory) => {
             const archive = await (0, tools_1.downloadVerified)(`https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz`, GITLEAKS_SHA256);
             await tc.extractTar(archive, directory);
-            fs.chmodSync(path.join(directory, "gitleaks"), 0o755);
+            fs.chmodSync(path.join(directory, "gitleaks"), 0o700);
         });
     }
     catch (err) {
@@ -35167,7 +35171,7 @@ function parseSemgrepJson(stdout) {
             file: r.path,
             line: r.start?.line ?? 0,
             column: r.start?.col,
-            cwe: cwe ? String(cwe).match(/CWE-\d+/)?.[0] : undefined,
+            cwe: cwe ? /CWE-\d+/.exec(String(cwe))?.[0] : undefined,
         });
     }
     return findings;
@@ -35269,9 +35273,9 @@ exports.parseSpotbugsXml = parseSpotbugsXml;
 // SpotBugs + FindSecBugs engine adapter for Java/Kotlin.
 // Compiles .java sources, downloads SpotBugs+FindSecBugs on demand, parses XML.
 const core = __importStar(__nccwpck_require__(7484));
-const fs = __importStar(__nccwpck_require__(9896));
-const os = __importStar(__nccwpck_require__(857));
-const path = __importStar(__nccwpck_require__(6928));
+const fs = __importStar(__nccwpck_require__(3024));
+const os = __importStar(__nccwpck_require__(8161));
+const path = __importStar(__nccwpck_require__(6760));
 const tc = __importStar(__nccwpck_require__(3472));
 const exec_1 = __nccwpck_require__(3190);
 const target_1 = __nccwpck_require__(6746);
@@ -35297,7 +35301,7 @@ const HIGH_PATTERNS = new Set([
 function mapSeverity(type, priority) {
     if (HIGH_PATTERNS.has(type))
         return "high";
-    const p = parseInt(priority, 10);
+    const p = Number.parseInt(priority, 10);
     if (p === 1)
         return "high";
     if (p === 2)
@@ -35345,33 +35349,39 @@ function findClassDirs(dir) {
     return found;
 }
 async function tryProjectBuild(abs, noteParts) {
-    // Maven
-    if (fs.existsSync(path.join(abs, "pom.xml")) && (await (0, exec_1.which)("mvn"))) {
-        core.info("Detected pom.xml — running 'mvn compile' for a full classpath…");
-        const res = await (0, exec_1.run)("mvn", ["-q", "-B", "-DskipTests", "compile"], { cwd: abs });
-        if (res.exitCode !== 0)
-            noteParts.push("mvn compile had errors");
-        const dirs = findClassDirs(abs);
-        if (dirs.length)
-            return dirs;
-    }
-    // Gradle
+    const mavenClasses = await tryMavenBuild(abs, noteParts);
+    if (mavenClasses.length > 0)
+        return mavenClasses;
+    return tryGradleBuild(abs, noteParts);
+}
+async function tryMavenBuild(abs, noteParts) {
+    if (!fs.existsSync(path.join(abs, "pom.xml")) || !(await (0, exec_1.which)("mvn")))
+        return [];
+    core.info("Detected pom.xml — running 'mvn compile' for a full classpath…");
+    const result = await (0, exec_1.run)("mvn", ["-q", "-B", "-DskipTests", "compile"], { cwd: abs });
+    if (result.exitCode !== 0)
+        noteParts.push("mvn compile had errors");
+    return findClassDirs(abs);
+}
+async function gradleCommand(abs) {
     const gradlew = path.join(abs, "gradlew");
+    if (fs.existsSync(gradlew))
+        return gradlew;
+    return (await (0, exec_1.which)("gradle")) ? "gradle" : "";
+}
+async function tryGradleBuild(abs, noteParts) {
     const hasGradle = fs.existsSync(path.join(abs, "build.gradle")) ||
         fs.existsSync(path.join(abs, "build.gradle.kts"));
-    if (hasGradle) {
-        const gradleCmd = fs.existsSync(gradlew) ? gradlew : (await (0, exec_1.which)("gradle")) ? "gradle" : "";
-        if (gradleCmd) {
-            core.info("Detected Gradle build — running 'classes' task for a full classpath…");
-            const res = await (0, exec_1.run)(gradleCmd, ["classes", "--console=plain", "-q"], { cwd: abs });
-            if (res.exitCode !== 0)
-                noteParts.push("gradle build had errors");
-            const dirs = findClassDirs(abs);
-            if (dirs.length)
-                return dirs;
-        }
-    }
-    return [];
+    if (!hasGradle)
+        return [];
+    const command = await gradleCommand(abs);
+    if (!command)
+        return [];
+    core.info("Detected Gradle build — running 'classes' task for a full classpath…");
+    const result = await (0, exec_1.run)(command, ["classes", "--console=plain", "-q"], { cwd: abs });
+    if (result.exitCode !== 0)
+        noteParts.push("gradle build had errors");
+    return findClassDirs(abs);
 }
 async function ensureKotlinc() {
     if (await (0, exec_1.which)("kotlinc"))
@@ -35397,13 +35407,70 @@ async function ensureSpotbugs() {
             const plugin = await (0, tools_1.downloadVerified)(FINDSECBUGS_URL, FINDSECBUGS_SHA256);
             const pluginDir = path.join(directory, `spotbugs-${SPOTBUGS_VERSION}`, "plugin");
             fs.copyFileSync(plugin, path.join(pluginDir, "findsecbugs-plugin.jar"));
-            fs.chmodSync(path.join(directory, executable), 0o755);
+            fs.chmodSync(path.join(directory, executable), 0o700);
         });
     }
     catch (err) {
         core.warning(`spotbugs installation failed: ${String(err).slice(0, 200)}`);
         return null;
     }
+}
+async function compileJava(javaFiles, classesDir, notes) {
+    if (javaFiles.length === 0)
+        return;
+    const result = await (0, exec_1.run)("javac", ["-d", classesDir, ...javaFiles]);
+    if (result.exitCode !== 0)
+        notes.push("javac had errors (missing deps?)");
+}
+async function compileKotlin(kotlinFiles, classesDir, notes) {
+    if (kotlinFiles.length === 0)
+        return;
+    const command = await ensureKotlinc();
+    if (!command) {
+        notes.push("kotlinc unavailable");
+        return;
+    }
+    const result = await (0, exec_1.run)(command, [...kotlinFiles, "-d", classesDir]);
+    if (result.exitCode !== 0)
+        notes.push("kotlinc had errors (missing deps?)");
+}
+async function compileWithoutBuild(javaFiles, kotlinFiles, workdir, notes) {
+    if (!(await (0, exec_1.which)("javac"))) {
+        notes.push("javac not available");
+        return [];
+    }
+    core.info("No build output found — falling back to direct javac/kotlinc compilation…");
+    const classesDir = path.join(workdir, "classes");
+    fs.mkdirSync(classesDir, { recursive: true });
+    await compileJava(javaFiles, classesDir, notes);
+    await compileKotlin(kotlinFiles, classesDir, notes);
+    const hasClasses = fs.existsSync(classesDir) && fs.readdirSync(classesDir).length > 0;
+    return hasClasses ? [classesDir] : [];
+}
+async function analyzeClasses(script, classDirs, workdir, sources) {
+    const output = path.join(workdir, "spotbugs.xml");
+    const result = await (0, exec_1.run)(script, [
+        "-textui",
+        "-xml:withMessages",
+        "-effort:max",
+        "-low",
+        "-output",
+        output,
+        ...classDirs,
+    ]);
+    if (!fs.existsSync(output)) {
+        return {
+            engine: "spotbugs",
+            findings: [],
+            status: "failed",
+            note: `spotbugs run failed: ${result.stderr.slice(0, 200)}`,
+        };
+    }
+    return {
+        engine: "spotbugs",
+        findings: parseSpotbugsXml(fs.readFileSync(output, "utf-8"), sources),
+        status: "success",
+    };
 }
 async function runSpotbugs(target) {
     const abs = (0, target_1.resolveTarget)(target);
@@ -35416,40 +35483,9 @@ async function runSpotbugs(target) {
     const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "polyscan-spotbugs-"));
     try {
         const noteParts = [];
-        // Prefer the project's build so SpotBugs receives the full dependency classpath.
         let classDirs = await tryProjectBuild(abs, noteParts);
-        // Fall back to dependency-free direct compilation.
         if (classDirs.length === 0) {
-            if (!(await (0, exec_1.which)("javac"))) {
-                return {
-                    engine: "spotbugs",
-                    findings: [],
-                    status: "failed",
-                    note: "no build tool succeeded and javac not available",
-                };
-            }
-            core.info("No build output found — falling back to direct javac/kotlinc compilation…");
-            const classesDir = path.join(workdir, "classes");
-            fs.mkdirSync(classesDir, { recursive: true });
-            if (javaFiles.length > 0) {
-                const compile = await (0, exec_1.run)("javac", ["-d", classesDir, ...javaFiles]);
-                if (compile.exitCode !== 0)
-                    noteParts.push("javac had errors (missing deps?)");
-            }
-            if (kotlinFiles.length > 0) {
-                const kotlincBin = await ensureKotlinc();
-                if (kotlincBin) {
-                    const ktc = await (0, exec_1.run)(kotlincBin, [...kotlinFiles, "-d", classesDir]);
-                    if (ktc.exitCode !== 0)
-                        noteParts.push("kotlinc had errors (missing deps?)");
-                }
-                else {
-                    noteParts.push("kotlinc unavailable");
-                }
-            }
-            if (fs.existsSync(classesDir) && fs.readdirSync(classesDir).length > 0) {
-                classDirs = [classesDir];
-            }
+            classDirs = await compileWithoutBuild(javaFiles, kotlinFiles, workdir, noteParts);
         }
         if (classDirs.length === 0) {
             return {
@@ -35459,8 +35495,8 @@ async function runSpotbugs(target) {
                 note: `no .class files to analyze${noteParts.length ? " (" + noteParts.join("; ") + ")" : ""}`,
             };
         }
-        const sbScript = await ensureSpotbugs();
-        if (!sbScript) {
+        const script = await ensureSpotbugs();
+        if (!script) {
             return {
                 engine: "spotbugs",
                 findings: [],
@@ -35468,32 +35504,10 @@ async function runSpotbugs(target) {
                 note: "spotbugs or FindSecBugs installation failed",
             };
         }
-        const xmlOut = path.join(workdir, "spotbugs.xml");
-        const res = await (0, exec_1.run)(sbScript, [
-            "-textui",
-            "-xml:withMessages",
-            "-effort:max",
-            "-low",
-            "-output",
-            xmlOut,
-            ...classDirs,
-        ]);
-        if (!fs.existsSync(xmlOut)) {
-            return {
-                engine: "spotbugs",
-                findings: [],
-                status: "failed",
-                note: `spotbugs run failed: ${res.stderr.slice(0, 200)}`,
-            };
-        }
-        const xml = fs.readFileSync(xmlOut, "utf-8");
-        const findings = parseSpotbugsXml(xml, allSources);
-        return {
-            engine: "spotbugs",
-            findings,
-            status: "success",
-            note: noteParts.length ? noteParts.join("; ") : undefined,
-        };
+        const result = await analyzeClasses(script, classDirs, workdir, allSources);
+        const notes = [...(result.note ? [result.note] : []), ...noteParts];
+        result.note = notes.length > 0 ? notes.join("; ") : undefined;
+        return result;
     }
     finally {
         fs.rmSync(workdir, { recursive: true, force: true });
@@ -35525,7 +35539,7 @@ function parseSpotbugsXml(xml, javaFiles) {
             severity: mapSeverity(type, priority),
             message: shortMsg || type,
             file: resolved,
-            line: parseInt(start, 10) || 0,
+            line: Number.parseInt(start, 10) || 0,
             cwe: cweMatch ? `CWE-${cweMatch}` : undefined,
         });
     }
@@ -35580,9 +35594,9 @@ exports.runTrivy = runTrivy;
 // misconfigurations (SCA + IaC), with optional container image scan.
 // Installs the trivy binary on demand.
 const core = __importStar(__nccwpck_require__(7484));
-const fs = __importStar(__nccwpck_require__(9896));
-const os = __importStar(__nccwpck_require__(857));
-const path = __importStar(__nccwpck_require__(6928));
+const fs = __importStar(__nccwpck_require__(3024));
+const os = __importStar(__nccwpck_require__(8161));
+const path = __importStar(__nccwpck_require__(6760));
 const tc = __importStar(__nccwpck_require__(3472));
 const exec_1 = __nccwpck_require__(3190);
 const target_1 = __nccwpck_require__(6746);
@@ -35611,7 +35625,7 @@ async function ensureTrivy() {
         return await (0, tools_1.cachedTool)("trivy", TRIVY_VERSION, "trivy", async (directory) => {
             const archive = await (0, tools_1.downloadVerified)(`https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz`, TRIVY_SHA256);
             await tc.extractTar(archive, directory);
-            fs.chmodSync(path.join(directory, "trivy"), 0o755);
+            fs.chmodSync(path.join(directory, "trivy"), 0o700);
         });
     }
     catch (err) {
@@ -35624,34 +35638,72 @@ function parseTrivyData(data, imageRef) {
     for (const result of data.Results ?? []) {
         const r = result;
         const artifact = r.Target ?? "unknown";
-        for (const v of r.Vulnerabilities ?? []) {
-            const vuln = v;
-            const fixed = vuln.FixedVersion ? ` (fixed in ${vuln.FixedVersion})` : "";
-            findings.push({
-                engine: "trivy",
-                ruleId: vuln.VulnerabilityID ?? "TRIVY-VULN",
-                severity: mapSeverity(vuln.Severity ?? ""),
-                message: `${vuln.PkgName}@${vuln.InstalledVersion}: ${vuln.Title ?? vuln.VulnerabilityID}${fixed}`,
-                file: artifact,
-                line: 0,
-                cwe: Array.isArray(vuln.CweIDs) && vuln.CweIDs.length ? vuln.CweIDs[0] : undefined,
-                source: imageRef ? `image:${imageRef}` : undefined,
-            });
-        }
-        for (const mc of r.Misconfigurations ?? []) {
-            const m = mc;
-            findings.push({
-                engine: "trivy",
-                ruleId: m.ID ?? "TRIVY-MISCONF",
-                severity: mapSeverity(m.Severity ?? ""),
-                message: `${m.Title ?? m.ID}: ${m.Message ?? ""}`.trim(),
-                file: artifact,
-                line: m.CauseMetadata?.StartLine ?? 0,
-                source: imageRef ? `image:${imageRef}` : undefined,
-            });
-        }
+        findings.push(...parseVulnerabilities(r.Vulnerabilities ?? [], artifact, imageRef));
+        findings.push(...parseMisconfigurations(r.Misconfigurations ?? [], artifact, imageRef));
     }
     return findings;
+}
+function parseVulnerabilities(vulnerabilities, artifact, imageRef) {
+    return vulnerabilities.map((value) => {
+        const vulnerability = value;
+        const fixed = vulnerability.FixedVersion ? ` (fixed in ${vulnerability.FixedVersion})` : "";
+        return {
+            engine: "trivy",
+            ruleId: vulnerability.VulnerabilityID ?? "TRIVY-VULN",
+            severity: mapSeverity(vulnerability.Severity ?? ""),
+            message: `${vulnerability.PkgName}@${vulnerability.InstalledVersion}: ` +
+                `${vulnerability.Title ?? vulnerability.VulnerabilityID}${fixed}`,
+            file: artifact,
+            line: 0,
+            cwe: vulnerability.CweIDs?.[0],
+            source: imageRef ? `image:${imageRef}` : undefined,
+        };
+    });
+}
+function parseMisconfigurations(misconfigurations, artifact, imageRef) {
+    return misconfigurations.map((value) => {
+        const misconfiguration = value;
+        return {
+            engine: "trivy",
+            ruleId: misconfiguration.ID ?? "TRIVY-MISCONF",
+            severity: mapSeverity(misconfiguration.Severity ?? ""),
+            message: `${misconfiguration.Title ?? misconfiguration.ID}: ${misconfiguration.Message ?? ""}`.trim(),
+            file: artifact,
+            line: misconfiguration.CauseMetadata?.StartLine ?? 0,
+            source: imageRef ? `image:${imageRef}` : undefined,
+        };
+    });
+}
+async function scanTrivy(bin, args, output, label, imageRef) {
+    const subject = args.at(-1);
+    const options = args.slice(0, -1);
+    const result = await (0, exec_1.run)(bin, [
+        ...options,
+        "--format",
+        "json",
+        "--output",
+        output,
+        "--quiet",
+        ...(subject ? [subject] : []),
+    ]);
+    const notes = [];
+    if (result.exitCode !== 0) {
+        notes.push(`${label} scan exited ${result.exitCode}: ${result.stderr.slice(0, 120)}`);
+    }
+    if (!fs.existsSync(output)) {
+        notes.push(`${label} scan produced no output: ${result.stdout.slice(0, 150)}`);
+        return { findings: [], note: notes.join("; ") };
+    }
+    try {
+        return {
+            findings: parseTrivyData(JSON.parse(fs.readFileSync(output, "utf-8")), imageRef),
+            note: notes.length > 0 ? notes.join("; ") : undefined,
+        };
+    }
+    catch (err) {
+        notes.push(`${label} parse error: ${String(err).slice(0, 150)}`);
+        return { findings: [], note: notes.join("; ") };
+    }
 }
 async function runTrivy(target, image) {
     const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "polyscan-trivy-"));
@@ -35660,68 +35712,19 @@ async function runTrivy(target, image) {
         if (!bin) {
             return { engine: "trivy", findings: [], status: "failed", note: "trivy not installed" };
         }
-        const allFindings = [];
-        const notes = [];
-        // --offline-scan avoids resolving parent POMs over the network.
         const fsOut = path.join(workdir, "trivy-fs.json");
-        const fsRes = await (0, exec_1.run)(bin, [
-            "fs",
-            "--scanners",
-            "vuln,misconfig",
-            "--offline-scan",
-            "--format",
-            "json",
-            "--output",
-            fsOut,
-            "--quiet",
-            (0, target_1.resolveTarget)(target),
-        ]);
-        if (fsRes.exitCode !== 0) {
-            notes.push(`fs scan exited ${fsRes.exitCode}: ${fsRes.stderr.slice(0, 120)}`);
-        }
-        if (fs.existsSync(fsOut)) {
-            try {
-                allFindings.push(...parseTrivyData(JSON.parse(fs.readFileSync(fsOut, "utf-8"))));
-            }
-            catch (err) {
-                notes.push(`fs parse error: ${String(err).slice(0, 150)}`);
-            }
-        }
-        else {
-            notes.push(`fs scan produced no output: ${fsRes.stdout.slice(0, 150)}`);
-        }
+        const scans = [
+            await scanTrivy(bin, ["fs", "--scanners", "vuln,misconfig", "--offline-scan", (0, target_1.resolveTarget)(target)], fsOut, "fs"),
+        ];
         if (image) {
             core.info(`trivy: scanning image "${image}"…`);
             const imgOut = path.join(workdir, "trivy-image.json");
-            const imgRes = await (0, exec_1.run)(bin, [
-                "image",
-                "--scanners",
-                "vuln",
-                "--format",
-                "json",
-                "--output",
-                imgOut,
-                "--quiet",
-                image,
-            ]);
-            if (imgRes.exitCode !== 0) {
-                notes.push(`image scan exited ${imgRes.exitCode}: ${imgRes.stderr.slice(0, 120)}`);
-            }
-            if (fs.existsSync(imgOut)) {
-                try {
-                    allFindings.push(...parseTrivyData(JSON.parse(fs.readFileSync(imgOut, "utf-8")), image));
-                }
-                catch (err) {
-                    notes.push(`image parse error: ${String(err).slice(0, 150)}`);
-                }
-            }
-            else {
-                notes.push(`image scan produced no output: ${imgRes.stdout.slice(0, 150)}`);
-            }
+            scans.push(await scanTrivy(bin, ["image", "--scanners", "vuln", image], imgOut, "image", image));
         }
+        const notes = scans.flatMap((scan) => (scan.note ? [scan.note] : []));
         return {
             engine: "trivy",
-            findings: allFindings,
+            findings: scans.flatMap((scan) => scan.findings),
             status: notes.length ? "failed" : "success",
             note: notes.length ? notes.join("; ") : undefined,
         };
@@ -35779,9 +35782,9 @@ exports.ensurePythonTool = ensurePythonTool;
 // Shared helper to run an external command and capture stdout/stderr,
 // tolerating non-zero exit codes (linters exit non-zero when they find issues).
 const exec = __importStar(__nccwpck_require__(5236));
-const fs = __importStar(__nccwpck_require__(9896));
-const os = __importStar(__nccwpck_require__(857));
-const path = __importStar(__nccwpck_require__(6928));
+const fs = __importStar(__nccwpck_require__(3024));
+const os = __importStar(__nccwpck_require__(8161));
+const path = __importStar(__nccwpck_require__(6760));
 async function run(command, args, options = {}) {
     let stdout = "";
     let stderr = "";
@@ -35924,8 +35927,8 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 // PolyScan GitHub Action — entry point.
 const core = __importStar(__nccwpck_require__(7484));
-const fs = __importStar(__nccwpck_require__(9896));
-const path = __importStar(__nccwpck_require__(6928));
+const fs = __importStar(__nccwpck_require__(3024));
+const path = __importStar(__nccwpck_require__(6760));
 const schema_1 = __nccwpck_require__(5060);
 const semgrep_1 = __nccwpck_require__(840);
 const bandit_1 = __nccwpck_require__(9429);
@@ -35951,8 +35954,32 @@ function intInput(name, def) {
     const raw = core.getInput(name);
     if (raw === "")
         return def;
-    const n = parseInt(raw, 10);
+    const n = Number.parseInt(raw, 10);
     return Number.isNaN(n) ? def : n;
+}
+function readConfig() {
+    const engines = (0, engines_1.resolveEngines)(core.getInput("engines"));
+    const unknown = (0, engines_1.unknownEngines)(engines);
+    if (unknown.length > 0) {
+        throw new Error(`Unknown engine(s): ${unknown.join(", ")}. Valid engines: ${engines_1.ALL_ENGINES.join(", ")}`);
+    }
+    return {
+        target: (0, target_1.resolveTarget)(core.getInput("target") || "."),
+        engines,
+        gateEnforced: boolInput("gate", true),
+        failOnEngineError: boolInput("fail-on-engine-error", true),
+        wantSarif: boolInput("sarif", true),
+        wantSbom: boolInput("sbom", false),
+        uploadArtifacts: boolInput("upload-artifacts", true),
+        uploadSarif: boolInput("upload-sarif", false),
+        outputDir: (0, target_1.resolveOutputDir)(core.getInput("output-dir") || "."),
+        trivyImage: core.getInput("trivy-image") || undefined,
+        gate: {
+            maxCritical: intInput("max-critical", 0),
+            maxHigh: intInput("max-high", 0),
+            maxMedium: intInput("max-medium", 50),
+        },
+    };
 }
 async function runEngine(name, target, trivyImage) {
     try {
@@ -35984,121 +36011,95 @@ async function runEngine(name, target, trivyImage) {
         };
     }
 }
-async function main() {
-    (0, tools_1.assertSupportedPlatform)();
-    const targetInput = core.getInput("target") || ".";
-    const engines = (0, engines_1.resolveEngines)(core.getInput("engines"));
-    const unknown = (0, engines_1.unknownEngines)(engines);
-    if (unknown.length > 0) {
-        throw new Error(`Unknown engine(s): ${unknown.join(", ")}. Valid engines: ${engines_1.ALL_ENGINES.join(", ")}`);
+function normalizeEngineFindings(result, target) {
+    try {
+        result.findings = result.findings.map((finding) => finding.source?.startsWith("image:")
+            ? finding
+            : { ...finding, file: (0, target_1.normalizeFindingPath)(finding.file, target) });
     }
-    const validEngines = engines;
-    const gateEnforced = boolInput("gate", true);
-    const failOnEngineError = boolInput("fail-on-engine-error", true);
-    const wantSarif = boolInput("sarif", true);
-    const wantSbom = boolInput("sbom", false);
-    const uploadArtifacts = boolInput("upload-artifacts", true);
-    const uploadSarif = boolInput("upload-sarif", false);
-    const outputDirInput = core.getInput("output-dir") || ".";
-    const trivyImage = core.getInput("trivy-image") || undefined;
-    const gateCfg = {
-        maxCritical: intInput("max-critical", 0),
-        maxHigh: intInput("max-high", 0),
-        maxMedium: intInput("max-medium", 50),
-    };
-    const target = (0, target_1.resolveTarget)(targetInput);
-    const outputDir = (0, target_1.resolveOutputDir)(outputDirInput);
-    core.info(`PolyScan scanning "${target}" with engines: ${validEngines.join(", ")}`);
-    // Run engines sequentially (they install tools; parallel would race on pip/npm).
+    catch (err) {
+        result.findings = [];
+        result.status = "failed";
+        result.note = `invalid finding path: ${String(err).slice(0, 200)}`;
+    }
+}
+async function runEngines(config) {
     const engineResults = [];
-    for (const e of validEngines) {
-        core.startGroup(`Engine: ${e}`);
-        const res = await runEngine(e, target, trivyImage);
-        try {
-            res.findings = res.findings.map((finding) => finding.source?.startsWith("image:")
-                ? finding
-                : { ...finding, file: (0, target_1.normalizeFindingPath)(finding.file, target) });
-        }
-        catch (err) {
-            res.findings = [];
-            res.status = "failed";
-            res.note = `invalid finding path: ${String(err).slice(0, 200)}`;
-        }
-        core.info(`${e}: ${res.findings.length} findings (status=${res.status})`);
-        if (res.note)
-            core.info(`note: ${res.note}`);
+    for (const engine of config.engines) {
+        core.startGroup(`Engine: ${engine}`);
+        const result = await runEngine(engine, config.target, config.trivyImage);
+        normalizeEngineFindings(result, config.target);
+        core.info(`${engine}: ${result.findings.length} findings (status=${result.status})`);
+        if (result.note)
+            core.info(`note: ${result.note}`);
         core.endGroup();
-        engineResults.push(res);
+        engineResults.push(result);
     }
-    const findings = engineResults.flatMap((r) => r.findings);
-    // Sort by severity rank then engine.
+    return engineResults;
+}
+function sortedFindings(engineResults) {
+    const findings = engineResults.flatMap((result) => result.findings);
     const rank = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
     findings.sort((a, b) => rank[a.severity] - rank[b.severity] || a.engine.localeCompare(b.engine));
-    const counts = (0, schema_1.countBySeverity)(findings);
-    const gate = (0, gate_1.evaluateGate)(findings, gateCfg);
+    return findings;
+}
+function writeReports(config, findings, summary) {
     const artifactFiles = [];
-    // SARIF
     let sarifPath = "";
-    if (wantSarif) {
-        sarifPath = path.join(outputDir, "polyscan.sarif");
+    if (config.wantSarif) {
+        sarifPath = path.join(config.outputDir, "polyscan.sarif");
         fs.writeFileSync(sarifPath, (0, sarif_1.toSarif)(findings));
         core.info(`Wrote SARIF: ${sarifPath}`);
         artifactFiles.push(sarifPath);
         core.setOutput("sarif-file", sarifPath);
     }
-    // SBOM
-    let sbomPath = "";
-    if (wantSbom) {
-        sbomPath = path.join(outputDir, "polyscan.sbom.json");
-        fs.writeFileSync(sbomPath, (0, sbom_1.toSbom)(target));
+    if (config.wantSbom) {
+        const sbomPath = path.join(config.outputDir, "polyscan.sbom.json");
+        fs.writeFileSync(sbomPath, (0, sbom_1.toSbom)(config.target));
         core.info(`Wrote SBOM: ${sbomPath}`);
         artifactFiles.push(sbomPath);
         core.setOutput("sbom-file", sbomPath);
     }
-    // Job summary
-    const summaryMd = (0, summary_1.renderSummary)(findings, counts, gate, gateEnforced, engineResults);
+    const summaryPath = path.join(config.outputDir, "polyscan-summary.md");
+    fs.writeFileSync(summaryPath, summary);
+    artifactFiles.push(summaryPath);
+    return { files: artifactFiles, sarifPath };
+}
+async function publishSummary(summary) {
     try {
-        await core.summary.addRaw(summaryMd).write();
+        await core.summary.addRaw(summary).write();
     }
     catch (err) {
         core.warning(`could not write job summary: ${String(err).slice(0, 150)}`);
     }
-    // Also emit a summary file for consumers who want it as an artifact.
-    const summaryPath = path.join(outputDir, "polyscan-summary.md");
-    fs.writeFileSync(summaryPath, summaryMd);
-    artifactFiles.push(summaryPath);
-    // Upload artifacts
-    if (uploadArtifacts && artifactFiles.length > 0) {
-        try {
-            const { DefaultArtifactClient } = await __nccwpck_require__.e(/* import() */ 420).then(__nccwpck_require__.bind(__nccwpck_require__, 420));
-            const client = new DefaultArtifactClient();
-            await client.uploadArtifact("polyscan-reports", artifactFiles, outputDir, {
-                retentionDays: 30,
-            });
-            core.info(`Uploaded ${artifactFiles.length} report artifact(s).`);
-        }
-        catch (err) {
-            core.warning(`artifact upload failed: ${String(err).slice(0, 200)}`);
-        }
+}
+async function uploadReports(files, outputDir) {
+    try {
+        const { DefaultArtifactClient } = await __nccwpck_require__.e(/* import() */ 420).then(__nccwpck_require__.bind(__nccwpck_require__, 420));
+        const client = new DefaultArtifactClient();
+        await client.uploadArtifact("polyscan-reports", files, outputDir, { retentionDays: 30 });
+        core.info(`Uploaded ${files.length} report artifact(s).`);
     }
-    // Upload SARIF to code scanning (delegated hint — actual upload via separate step
-    // is recommended, but we support it if the CodeQL upload tool is present).
-    if (uploadSarif && sarifPath) {
-        core.info("upload-sarif=true: use a follow-up 'github/codeql-action/upload-sarif' step " +
-            `with sarif_file: ${sarifPath} (needs security-events: write).`);
+    catch (err) {
+        core.warning(`artifact upload failed: ${String(err).slice(0, 200)}`);
     }
-    // Outputs
+}
+function setOutputs(findings, engineResults, gatePassed) {
+    const counts = (0, schema_1.countBySeverity)(findings);
     core.setOutput("total", String(counts.total));
     core.setOutput("critical", String(counts.critical));
     core.setOutput("high", String(counts.high));
     core.setOutput("medium", String(counts.medium));
     core.setOutput("low", String(counts.low));
     core.setOutput("info", String(counts.info));
-    core.setOutput("gate-passed", String(gate.passed));
+    core.setOutput("gate-passed", String(gatePassed));
     const failedEngines = engineResults.filter((result) => result.status === "failed");
     core.setOutput("engines-passed", String(failedEngines.length === 0));
     core.setOutput("failed-engines", failedEngines.map((result) => result.engine).join(","));
     core.info(`Totals — critical:${counts.critical} high:${counts.high} medium:${counts.medium} low:${counts.low} total:${counts.total}`);
+    return failedEngines;
+}
+function enforceResults(failedEngines, failOnEngineError, gateEnforced, gate) {
     const failures = [];
     if (failOnEngineError && failedEngines.length > 0) {
         failures.push(`engines failed: ${failedEngines.map((result) => result.engine).join(", ")}`);
@@ -36118,6 +36119,27 @@ async function main() {
     else {
         core.info("Quality Gate passed.");
     }
+}
+async function main() {
+    (0, tools_1.assertSupportedPlatform)();
+    const config = readConfig();
+    core.info(`PolyScan scanning "${config.target}" with engines: ${config.engines.join(", ")}`);
+    const engineResults = await runEngines(config);
+    const findings = sortedFindings(engineResults);
+    const counts = (0, schema_1.countBySeverity)(findings);
+    const gate = (0, gate_1.evaluateGate)(findings, config.gate);
+    const summary = (0, summary_1.renderSummary)(findings, counts, gate, config.gateEnforced, engineResults);
+    await publishSummary(summary);
+    const reports = writeReports(config, findings, summary);
+    if (config.uploadArtifacts && reports.files.length > 0) {
+        await uploadReports(reports.files, config.outputDir);
+    }
+    if (config.uploadSarif && reports.sarifPath) {
+        core.info("upload-sarif=true: use a follow-up 'github/codeql-action/upload-sarif' step " +
+            `with sarif_file: ${reports.sarifPath} (needs security-events: write).`);
+    }
+    const failedEngines = setOutputs(findings, engineResults, gate.passed);
+    enforceResults(failedEngines, config.failOnEngineError, config.gateEnforced, gate);
 }
 main().catch((err) => {
     core.setFailed(`PolyScan crashed: ${err instanceof Error ? err.stack : String(err)}`);
@@ -36262,9 +36284,9 @@ exports.toSbom = toSbom;
 // Reads exact dependency versions from lock files when available,
 // falling back to manifest files for projects without lock files.
 // Supported: package-lock.json (v1/v2/v3), Pipfile.lock, requirements.txt, package.json, pom.xml.
-const fs = __importStar(__nccwpck_require__(9896));
-const path = __importStar(__nccwpck_require__(6928));
-const crypto = __importStar(__nccwpck_require__(6982));
+const fs = __importStar(__nccwpck_require__(3024));
+const path = __importStar(__nccwpck_require__(6760));
+const crypto = __importStar(__nccwpck_require__(7598));
 const package_json_1 = __importDefault(__nccwpck_require__(8330));
 // npm: prefer package-lock.json (exact transitive deps) over package.json.
 function detectNpm(target, comps) {
@@ -36280,28 +36302,29 @@ function detectNpmLock(target, comps) {
         const lock = JSON.parse(fs.readFileSync(lockPath, "utf-8"));
         const seen = new Set();
         if ((lock.lockfileVersion ?? 1) >= 2 && lock.packages) {
-            // v2/v3: flat packages map, keys like "node_modules/foo" or "node_modules/x/node_modules/foo"
-            for (const [key, pkg] of Object.entries(lock.packages)) {
-                if (!key || pkg.link)
-                    continue; // skip root ("") and symlinks
-                const lastIdx = key.lastIndexOf("node_modules/");
-                const name = lastIdx >= 0 ? key.slice(lastIdx + "node_modules/".length) : key;
-                const version = pkg.version ?? "unknown";
-                const id = `${name}@${version}`;
-                if (seen.has(id))
-                    continue;
-                seen.add(id);
-                comps.push({ type: "library", name, version, purl: `pkg:npm/${name}@${version}` });
-            }
+            collectNpmLockPackages(lock.packages, comps, seen);
         }
         else if (lock.dependencies) {
-            // v1: nested dependencies object
             collectNpmV1Deps(lock.dependencies, comps, seen);
         }
         return true;
     }
     catch {
         return false;
+    }
+}
+function collectNpmLockPackages(packages, comps, seen) {
+    for (const [key, npmPackage] of Object.entries(packages)) {
+        if (!key || npmPackage.link)
+            continue;
+        const lastIndex = key.lastIndexOf("node_modules/");
+        const name = lastIndex >= 0 ? key.slice(lastIndex + "node_modules/".length) : key;
+        const version = npmPackage.version ?? "unknown";
+        const id = `${name}@${version}`;
+        if (seen.has(id))
+            continue;
+        seen.add(id);
+        comps.push({ type: "library", name, version, purl: `pkg:npm/${name}@${version}` });
     }
 }
 function collectNpmV1Deps(deps, comps, seen) {
@@ -36323,7 +36346,7 @@ function detectNpmManifest(target, comps) {
         return;
     try {
         const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
-        const deps = { ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) };
+        const deps = { ...pkg.dependencies, ...pkg.devDependencies };
         for (const [name, ver] of Object.entries(deps)) {
             const version = String(ver).replace(/[^0-9.]/g, "") || "0.0.0";
             comps.push({
@@ -36376,7 +36399,7 @@ function detectPipRequirements(target, comps) {
         const line = raw.trim();
         if (!line || line.startsWith("#"))
             continue;
-        const m = /^([A-Za-z0-9_.\-]+)\s*(?:==|>=|<=|~=)?\s*([0-9][A-Za-z0-9.\-]*)?/.exec(line);
+        const m = /^([\w.-]+)\s*(?:==|>=|<=|~=)?\s*(\d[\w.-]*)?/.exec(line);
         if (!m)
             continue;
         const name = m[1];
@@ -36390,7 +36413,7 @@ function detectPipRequirements(target, comps) {
     }
 }
 function xmlText(block, tag) {
-    const match = new RegExp(`<${tag}>\\s*([^<]+?)\\s*</${tag}>`).exec(block);
+    const match = new RegExp(String.raw `<${tag}>\s*([^<]+?)\s*</${tag}>`).exec(block);
     return match?.[1]?.trim();
 }
 function detectMaven(target, comps) {
@@ -36487,95 +36510,132 @@ const SEV_EMOJI = {
     info: "⚪",
 };
 function tableCell(value) {
-    return value.replace(/\r?\n/g, " ").replace(/\|/g, "\\|").trim();
+    return value
+        .split(/\r?\n/)
+        .join(" ")
+        .replaceAll("|", String.raw `\|`)
+        .trim();
 }
 function code(value) {
-    return `\`${tableCell(value).replace(/`/g, "'")}\``;
+    return `\`${tableCell(value).replaceAll("`", "'")}\``;
 }
-function renderSummary(findings, counts, gate, gateEnforced, engineResults) {
-    const lines = [];
-    lines.push("## 🔍 PolyScan Report");
-    lines.push("");
-    // Severity table
-    lines.push("| Severity | Count |");
-    lines.push("|---|---|");
-    lines.push(`| ${SEV_EMOJI.critical} Critical | ${counts.critical} |`);
-    lines.push(`| ${SEV_EMOJI.high} High | ${counts.high} |`);
-    lines.push(`| ${SEV_EMOJI.medium} Medium | ${counts.medium} |`);
-    lines.push(`| ${SEV_EMOJI.low} Low | ${counts.low} |`);
-    lines.push(`| ${SEV_EMOJI.info} Info | ${counts.info} |`);
-    lines.push(`| **Total** | **${counts.total}** |`);
-    lines.push("");
-    // Engine status
-    lines.push("### Engines");
-    for (const e of engineResults) {
-        const icon = e.status === "success" ? "✅" : e.status === "skipped" ? "ℹ️" : "⚠️";
-        const note = e.note ? ` — _${tableCell(e.note)}_` : "";
-        lines.push(`- ${icon} **${tableCell(e.engine)}**: ${e.findings.length} findings (${e.status})${note}`);
+function severitySection(counts) {
+    return [
+        "| Severity | Count |",
+        "|---|---|",
+        `| ${SEV_EMOJI.critical} Critical | ${counts.critical} |`,
+        `| ${SEV_EMOJI.high} High | ${counts.high} |`,
+        `| ${SEV_EMOJI.medium} Medium | ${counts.medium} |`,
+        `| ${SEV_EMOJI.low} Low | ${counts.low} |`,
+        `| ${SEV_EMOJI.info} Info | ${counts.info} |`,
+        `| **Total** | **${counts.total}** |`,
+        "",
+    ];
+}
+function engineIcon(result) {
+    if (result.status === "success")
+        return "✅";
+    if (result.status === "skipped")
+        return "ℹ️";
+    return "⚠️";
+}
+function engineSection(results) {
+    const lines = ["### Engines"];
+    for (const result of results) {
+        const note = result.note ? ` — _${tableCell(result.note)}_` : "";
+        lines.push(`- ${engineIcon(result)} **${tableCell(result.engine)}**: ` +
+            `${result.findings.length} findings (${result.status})${note}`);
     }
-    lines.push("");
-    // Secret / leak findings (gitleaks) — shown prominently regardless of the
-    // top-50 cap on the generic findings table, since secrets deserve visibility.
-    const secrets = findings.filter((f) => f.engine === "gitleaks");
-    if (secrets.length > 0) {
-        lines.push("### 🔑 Secrets Detected (gitleaks)");
-        lines.push("");
-        lines.push("| Rule | Location | Severity |");
-        lines.push("|---|---|---|");
-        for (const f of secrets) {
-            const cleanFile = f.file.replace(/^\.\//, "");
-            const loc = f.line > 0 ? `${cleanFile}:${f.line}` : cleanFile;
-            lines.push(`| ${code(f.ruleId)} | ${code(loc)} | ${SEV_EMOJI[f.severity]} ${f.severity} |`);
-        }
-        lines.push("");
-        lines.push("_gitleaks is run with `--redact`: secret values are masked by gitleaks at source and do not appear in logs or SARIF._");
-        lines.push("");
+    return [...lines, ""];
+}
+function findingLocation(finding) {
+    const cleanFile = finding.file.startsWith("./") ? finding.file.slice(2) : finding.file;
+    return finding.line > 0 ? `${cleanFile}:${finding.line}` : cleanFile;
+}
+function secretsSection(findings) {
+    const secrets = findings.filter((finding) => finding.engine === "gitleaks");
+    if (secrets.length === 0)
+        return [];
+    const lines = [
+        "### 🔑 Secrets Detected (gitleaks)",
+        "",
+        "| Rule | Location | Severity |",
+        "|---|---|---|",
+    ];
+    for (const finding of secrets) {
+        lines.push(`| ${code(finding.ruleId)} | ${code(findingLocation(finding))} | ` +
+            `${SEV_EMOJI[finding.severity]} ${finding.severity} |`);
     }
-    // Container image findings (trivy image scan) — shown in a dedicated block.
-    const imageFindings = findings.filter((f) => f.source?.startsWith("image:"));
-    if (imageFindings.length > 0) {
-        const imageName = imageFindings[0].source.slice("image:".length);
-        lines.push(`### 🐳 Container Image Scan (${code(imageName)})`);
-        lines.push("");
-        lines.push("| Sev | CVE / Rule | Finding | Layer |");
-        lines.push("|---|---|---|---|");
-        for (const f of imageFindings) {
-            const cwe = f.cwe ? ` (${f.cwe})` : "";
-            lines.push(`| ${SEV_EMOJI[f.severity]} ${f.severity} | ${code(f.ruleId)}${cwe} | ${tableCell(f.message)} | ${tableCell(f.file)} |`);
-        }
-        lines.push("");
+    return [
+        ...lines,
+        "",
+        "_gitleaks is run with `--redact`: secret values are masked by gitleaks at source and do not appear in logs or SARIF._",
+        "",
+    ];
+}
+function imageSection(findings) {
+    const imageFindings = findings.filter((finding) => finding.source?.startsWith("image:"));
+    if (imageFindings.length === 0)
+        return [];
+    const imageName = imageFindings[0].source?.slice("image:".length) ?? "unknown";
+    const lines = [
+        `### 🐳 Container Image Scan (${code(imageName)})`,
+        "",
+        "| Sev | CVE / Rule | Finding | Layer |",
+        "|---|---|---|---|",
+    ];
+    for (const finding of imageFindings) {
+        const cwe = finding.cwe ? ` (${finding.cwe})` : "";
+        lines.push(`| ${SEV_EMOJI[finding.severity]} ${finding.severity} | ` +
+            `${code(finding.ruleId)}${cwe} | ${tableCell(finding.message)} | ` +
+            `${tableCell(finding.file)} |`);
     }
-    // Findings table (top 50)
-    if (findings.length > 0) {
-        lines.push("### Findings");
-        lines.push("| Sev | Rule | Location | Engine |");
-        lines.push("|---|---|---|---|");
-        const shown = findings.slice(0, 50);
-        for (const f of shown) {
-            const cleanFile = f.file.replace(/^\.\//, "");
-            const loc = f.line > 0 ? `${cleanFile}:${f.line}` : cleanFile;
-            const cwe = f.cwe ? ` (${f.cwe})` : "";
-            lines.push(`| ${SEV_EMOJI[f.severity]} ${f.severity} | ${code(f.ruleId)}${cwe} | ${code(loc)} | ${tableCell(f.engine)} |`);
-        }
-        if (findings.length > shown.length) {
-            lines.push("");
-            lines.push(`_… and ${findings.length - shown.length} more findings._`);
-        }
-        lines.push("");
+    return [...lines, ""];
+}
+function findingsSection(findings) {
+    if (findings.length === 0)
+        return [];
+    const shown = findings.slice(0, 50);
+    const lines = [
+        "### Findings",
+        "| Sev | Rule | Location | Engine |",
+        "|---|---|---|---|",
+    ];
+    for (const finding of shown) {
+        const cwe = finding.cwe ? ` (${finding.cwe})` : "";
+        lines.push(`| ${SEV_EMOJI[finding.severity]} ${finding.severity} | ` +
+            `${code(finding.ruleId)}${cwe} | ${code(findingLocation(finding))} | ` +
+            `${tableCell(finding.engine)} |`);
     }
-    // Quality Gate
-    lines.push("### Quality Gate");
-    if (!gateEnforced) {
-        lines.push("> ℹ️ Quality Gate not enforced (`gate: false`).");
+    if (findings.length > shown.length) {
+        lines.push("", `_… and ${findings.length - shown.length} more findings._`);
+    }
+    return [...lines, ""];
+}
+function gateSection(gate, enforced) {
+    let result;
+    if (!enforced) {
+        result = "> ℹ️ Quality Gate not enforced (`gate: false`).";
     }
     else if (gate.passed) {
-        lines.push("> ✅ **Passed** — thresholds satisfied.");
+        result = "> ✅ **Passed** — thresholds satisfied.";
     }
     else {
-        lines.push(`> ❌ **Failed** — ${gate.reasons.join(", ")}.`);
+        result = `> ❌ **Failed** — ${gate.reasons.join(", ")}.`;
     }
-    lines.push("");
-    return lines.join("\n");
+    return ["### Quality Gate", result, ""];
+}
+function renderSummary(findings, counts, gate, gateEnforced, engineResults) {
+    return [
+        "## 🔍 PolyScan Report",
+        "",
+        ...severitySection(counts),
+        ...engineSection(engineResults),
+        ...secretsSection(findings),
+        ...imageSection(findings),
+        ...findingsSection(findings),
+        ...gateSection(gate, gateEnforced),
+    ].join("\n");
 }
 
 
@@ -36624,9 +36684,9 @@ exports.workspaceRoot = workspaceRoot;
 exports.resolveTarget = resolveTarget;
 exports.resolveOutputDir = resolveOutputDir;
 exports.normalizeFindingPath = normalizeFindingPath;
-const fs = __importStar(__nccwpck_require__(9896));
-const path = __importStar(__nccwpck_require__(6928));
-const url_1 = __nccwpck_require__(7016);
+const fs = __importStar(__nccwpck_require__(3024));
+const path = __importStar(__nccwpck_require__(6760));
+const node_url_1 = __nccwpck_require__(3136);
 function workspaceRoot() {
     return fs.realpathSync(process.env.GITHUB_WORKSPACE || process.cwd());
 }
@@ -36672,7 +36732,7 @@ function normalizeFindingPath(file, target) {
     let raw = file.trim();
     if (raw.startsWith("file://")) {
         try {
-            raw = (0, url_1.fileURLToPath)(raw);
+            raw = (0, node_url_1.fileURLToPath)(raw);
         }
         catch (err) {
             throw new Error(`invalid finding file URI "${file}": ${String(err)}`);
@@ -36744,10 +36804,10 @@ exports.verifySha256 = verifySha256;
 exports.downloadVerified = downloadVerified;
 exports.withTempDir = withTempDir;
 exports.cachedTool = cachedTool;
-const crypto = __importStar(__nccwpck_require__(6982));
-const fs = __importStar(__nccwpck_require__(9896));
-const os = __importStar(__nccwpck_require__(857));
-const path = __importStar(__nccwpck_require__(6928));
+const crypto = __importStar(__nccwpck_require__(7598));
+const fs = __importStar(__nccwpck_require__(3024));
+const os = __importStar(__nccwpck_require__(8161));
+const path = __importStar(__nccwpck_require__(6760));
 const tc = __importStar(__nccwpck_require__(3472));
 function assertSupportedPlatform(platform = process.platform, arch = process.arch) {
     if (platform !== "linux" || arch !== "x64") {
