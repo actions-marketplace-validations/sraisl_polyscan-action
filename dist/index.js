@@ -35638,8 +35638,7 @@ function parseTrivyData(data, imageRef) {
     for (const result of data.Results ?? []) {
         const r = result;
         const artifact = r.Target ?? "unknown";
-        findings.push(...parseVulnerabilities(r.Vulnerabilities ?? [], artifact, imageRef));
-        findings.push(...parseMisconfigurations(r.Misconfigurations ?? [], artifact, imageRef));
+        findings.push(...parseVulnerabilities(r.Vulnerabilities ?? [], artifact, imageRef), ...parseMisconfigurations(r.Misconfigurations ?? [], artifact, imageRef));
     }
     return findings;
 }
@@ -36511,8 +36510,7 @@ const SEV_EMOJI = {
 };
 function tableCell(value) {
     return value
-        .split(/\r?\n/)
-        .join(" ")
+        .replaceAll(/\r?\n/g, " ")
         .replaceAll("|", String.raw `\|`)
         .trim();
 }

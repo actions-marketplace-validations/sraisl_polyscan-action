@@ -12,8 +12,7 @@ const SEV_EMOJI: Record<string, string> = {
 
 function tableCell(value: string): string {
   return value
-    .split(/\r?\n/)
-    .join(" ")
+    .replaceAll(/\r?\n/g, " ")
     .replaceAll("|", String.raw`\|`)
     .trim();
 }
