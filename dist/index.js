@@ -34555,7 +34555,8 @@ exports.runBandit = runBandit;
 const core = __importStar(__nccwpck_require__(7484));
 const exec_1 = __nccwpck_require__(3190);
 const target_1 = __nccwpck_require__(6746);
-const BANDIT_VERSION = "1.9.4";
+const tool_versions_1 = __nccwpck_require__(8947);
+const BANDIT_VERSION = tool_versions_1.TOOLS.bandit.version;
 function mapSeverity(s) {
     switch ((s || "").toUpperCase()) {
         case "HIGH":
@@ -34683,9 +34684,11 @@ const path = __importStar(__nccwpck_require__(6760));
 const exec_1 = __nccwpck_require__(3190);
 const target_1 = __nccwpck_require__(6746);
 const tools_1 = __nccwpck_require__(1732);
-const DETEKT_VERSION = "1.23.7";
-const DETEKT_URL = `https://github.com/detekt/detekt/releases/download/v${DETEKT_VERSION}/detekt-cli-${DETEKT_VERSION}-all.jar`;
-const DETEKT_SHA256 = "84beded283012cb2b38bcaef4996452fcd6069d2e9ca74b50eaa79e0ad21897e";
+const tool_versions_1 = __nccwpck_require__(8947);
+const DETEKT = tool_versions_1.TOOLS.detekt;
+const DETEKT_VERSION = DETEKT.version;
+const DETEKT_URL = (0, tool_versions_1.githubReleaseUrl)(DETEKT);
+const DETEKT_SHA256 = DETEKT.sha256;
 // detekt SARIF levels: error/warning/note → map to our severities.
 function mapSeverity(level, ruleId) {
     // Security-relevant rules bumped to high.
@@ -34854,7 +34857,8 @@ const path = __importStar(__nccwpck_require__(6760));
 const exec_1 = __nccwpck_require__(3190);
 const target_1 = __nccwpck_require__(6746);
 const tools_1 = __nccwpck_require__(1732);
-const ESLINT_VERSION = "8.57.1";
+const tool_versions_1 = __nccwpck_require__(8947);
+const ESLINT_VERSION = tool_versions_1.TOOLS.eslint.version;
 function mapSeverity(sev) {
     // ESLint: 2 = error, 1 = warning
     return sev === 2 ? "high" : "medium";
@@ -35004,8 +35008,10 @@ const tc = __importStar(__nccwpck_require__(3472));
 const exec_1 = __nccwpck_require__(3190);
 const target_1 = __nccwpck_require__(6746);
 const tools_1 = __nccwpck_require__(1732);
-const GITLEAKS_VERSION = "8.21.0";
-const GITLEAKS_SHA256 = "6c3a240509647225997d31df06e872350e1c0fe2fb85d323ae29a9fef0012586";
+const tool_versions_1 = __nccwpck_require__(8947);
+const GITLEAKS = tool_versions_1.TOOLS.gitleaks;
+const GITLEAKS_VERSION = GITLEAKS.version;
+const GITLEAKS_SHA256 = GITLEAKS.sha256;
 // gitleaks severities in its SARIF are "Critical"/"High"/"Low"/"Info"; map to ours.
 function mapSeverity(level) {
     switch ((level || "").toLowerCase()) {
@@ -35081,7 +35087,7 @@ async function ensureGitleaks() {
     core.info(`gitleaks not found — downloading v${GITLEAKS_VERSION}…`);
     try {
         return await (0, tools_1.cachedTool)("gitleaks", GITLEAKS_VERSION, "gitleaks", async (directory) => {
-            const archive = await (0, tools_1.downloadVerified)(`https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz`, GITLEAKS_SHA256);
+            const archive = await (0, tools_1.downloadVerified)((0, tool_versions_1.githubReleaseUrl)(GITLEAKS), GITLEAKS_SHA256);
             await tc.extractTar(archive, directory);
             fs.chmodSync(path.join(directory, "gitleaks"), 0o700);
         });
@@ -35140,7 +35146,8 @@ exports.runSemgrep = runSemgrep;
 const core = __importStar(__nccwpck_require__(7484));
 const exec_1 = __nccwpck_require__(3190);
 const target_1 = __nccwpck_require__(6746);
-const SEMGREP_VERSION = "1.170.0";
+const tool_versions_1 = __nccwpck_require__(8947);
+const SEMGREP_VERSION = tool_versions_1.TOOLS.semgrep.version;
 function mapSeverity(s) {
     switch ((s || "").toUpperCase()) {
         case "ERROR":
@@ -35280,14 +35287,18 @@ const tc = __importStar(__nccwpck_require__(3472));
 const exec_1 = __nccwpck_require__(3190);
 const target_1 = __nccwpck_require__(6746);
 const tools_1 = __nccwpck_require__(1732);
-const SPOTBUGS_VERSION = "4.8.6";
-const SPOTBUGS_URL = `https://github.com/spotbugs/spotbugs/releases/download/${SPOTBUGS_VERSION}/spotbugs-${SPOTBUGS_VERSION}.tgz`;
-const SPOTBUGS_SHA256 = "b9d4d25e53cd4202b2dc19c549c0ff54f8a72fc76a71a8c40dee94422c67ebea";
-const FINDSECBUGS_VERSION = "1.13.0";
-const FINDSECBUGS_URL = `https://repo1.maven.org/maven2/com/h3xstream/findsecbugs/findsecbugs-plugin/${FINDSECBUGS_VERSION}/findsecbugs-plugin-${FINDSECBUGS_VERSION}.jar`;
-const FINDSECBUGS_SHA256 = "c239763a8c327b5fb653a34dece6398578bf435b9a32c212bb8e1abe701368a5";
-const KOTLIN_VERSION = "1.9.24";
-const KOTLIN_SHA256 = "eb7b68e01029fa67bc8d060ee54c12018f2c60ddc438cf21db14517229aa693b";
+const tool_versions_1 = __nccwpck_require__(8947);
+const SPOTBUGS = tool_versions_1.TOOLS.spotbugs;
+const FINDSECBUGS = tool_versions_1.TOOLS.findsecbugs;
+const KOTLIN = tool_versions_1.TOOLS.kotlin;
+const SPOTBUGS_VERSION = SPOTBUGS.version;
+const SPOTBUGS_URL = (0, tool_versions_1.githubReleaseUrl)(SPOTBUGS);
+const SPOTBUGS_SHA256 = SPOTBUGS.sha256;
+const FINDSECBUGS_VERSION = FINDSECBUGS.version;
+const FINDSECBUGS_URL = (0, tool_versions_1.mavenArtifactUrl)(FINDSECBUGS);
+const FINDSECBUGS_SHA256 = FINDSECBUGS.sha256;
+const KOTLIN_VERSION = KOTLIN.version;
+const KOTLIN_SHA256 = KOTLIN.sha256;
 // FindSecBugs bug patterns considered high severity (security-critical).
 const HIGH_PATTERNS = new Set([
     "SQL_INJECTION_JDBC",
@@ -35388,7 +35399,7 @@ async function ensureKotlinc() {
         return "kotlinc";
     try {
         return await (0, tools_1.cachedTool)("kotlin-compiler", KOTLIN_VERSION, path.join("kotlinc", "bin", "kotlinc"), async (directory) => {
-            const archive = await (0, tools_1.downloadVerified)(`https://github.com/JetBrains/kotlin/releases/download/v${KOTLIN_VERSION}/kotlin-compiler-${KOTLIN_VERSION}.zip`, KOTLIN_SHA256);
+            const archive = await (0, tools_1.downloadVerified)((0, tool_versions_1.githubReleaseUrl)(KOTLIN), KOTLIN_SHA256);
             await tc.extractZip(archive, directory);
         });
     }
@@ -35601,8 +35612,10 @@ const tc = __importStar(__nccwpck_require__(3472));
 const exec_1 = __nccwpck_require__(3190);
 const target_1 = __nccwpck_require__(6746);
 const tools_1 = __nccwpck_require__(1732);
-const TRIVY_VERSION = "0.72.0";
-const TRIVY_SHA256 = "bbb64b9695866ce4a7a8f5c9592002c5961cab378577fa3f8a040df362b9b2ea";
+const tool_versions_1 = __nccwpck_require__(8947);
+const TRIVY = tool_versions_1.TOOLS.trivy;
+const TRIVY_VERSION = TRIVY.version;
+const TRIVY_SHA256 = TRIVY.sha256;
 function mapSeverity(s) {
     switch ((s || "").toUpperCase()) {
         case "CRITICAL":
@@ -35623,7 +35636,7 @@ async function ensureTrivy() {
     core.info(`trivy not found — downloading v${TRIVY_VERSION}…`);
     try {
         return await (0, tools_1.cachedTool)("trivy", TRIVY_VERSION, "trivy", async (directory) => {
-            const archive = await (0, tools_1.downloadVerified)(`https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz`, TRIVY_SHA256);
+            const archive = await (0, tools_1.downloadVerified)((0, tool_versions_1.githubReleaseUrl)(TRIVY), TRIVY_SHA256);
             await tc.extractTar(archive, directory);
             fs.chmodSync(path.join(directory, "trivy"), 0o700);
         });
@@ -36826,6 +36839,38 @@ function normalizeFindingPath(file, target) {
 
 /***/ }),
 
+/***/ 8947:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.TOOLS = exports.TOOL_LOCK_SCHEMA_VERSION = void 0;
+exports.githubReleaseUrl = githubReleaseUrl;
+exports.mavenArtifactUrl = mavenArtifactUrl;
+const tools_lock_json_1 = __importDefault(__nccwpck_require__(1070));
+exports.TOOL_LOCK_SCHEMA_VERSION = tools_lock_json_1.default.schemaVersion;
+exports.TOOLS = tools_lock_json_1.default.tools;
+function expandVersion(template, version) {
+    return template.replaceAll("{version}", version);
+}
+function githubReleaseUrl(tool) {
+    const tag = expandVersion(tool.tagTemplate, tool.version);
+    const asset = expandVersion(tool.assetTemplate, tool.version);
+    return `https://github.com/${tool.repository}/releases/download/${tag}/${asset}`;
+}
+function mavenArtifactUrl(tool) {
+    const groupPath = tool.group.replaceAll(".", "/");
+    const filename = `${tool.artifact}-${tool.version}.${tool.extension}`;
+    return `https://repo1.maven.org/maven2/${groupPath}/${tool.artifact}/${tool.version}/${filename}`;
+}
+
+
+/***/ }),
+
 /***/ 1732:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -37328,7 +37373,15 @@ module.exports = require("zlib");
 /***/ ((module) => {
 
 "use strict";
-module.exports = /*#__PURE__*/JSON.parse('{"name":"polyscan-action","version":"1.0.0","description":"Multi-language SAST orchestrator as a native TypeScript GitHub Action with Quality Gate, SARIF, CycloneDX SBOM and job summary","main":"dist/index.js","engines":{"node":"24.x"},"scripts":{"prebuild":"node scripts/require-node24.cjs","build":"ncc build src/main.ts -o dist --source-map --license licenses.txt","build:test":"tsc -p tsconfig.test.json","typecheck":"tsc --noEmit","test":"npm run build:test && node --test \\"dist-test/test/**/*.js\\"","all":"npm run typecheck && npm run build"},"keywords":["sast","security","semgrep","bandit","eslint","spotbugs","sarif","sbom","github-action"],"author":"Stefan Raisl","license":"MIT","dependencies":{"@actions/artifact":"^6.2.1","@actions/core":"^1.11.1","@actions/exec":"^1.1.1","@actions/tool-cache":"^2.0.2"},"devDependencies":{"@types/node":"24.13.3","@vercel/ncc":"0.38.4","typescript":"5.9.3"},"overrides":{"undici":"^6.27.0","brace-expansion":"5.0.8"}}');
+module.exports = /*#__PURE__*/JSON.parse('{"name":"polyscan-action","version":"1.0.0","description":"Multi-language SAST orchestrator as a native TypeScript GitHub Action with Quality Gate, SARIF, CycloneDX SBOM and job summary","main":"dist/index.js","engines":{"node":"24.x"},"scripts":{"prebuild":"node scripts/require-node24.cjs","build":"ncc build src/main.ts -o dist --source-map --license licenses.txt","build:test":"tsc -p tsconfig.test.json","typecheck":"tsc --noEmit","test":"npm run build:test && node --test \\"dist-test/test/**/*.js\\"","all":"npm run typecheck && npm run build","engines:list":"node scripts/engine-tools.mjs list","engines:check":"node scripts/engine-tools.mjs check","engines:update":"node scripts/engine-tools.mjs update"},"keywords":["sast","security","semgrep","bandit","eslint","spotbugs","sarif","sbom","github-action"],"author":"Stefan Raisl","license":"MIT","dependencies":{"@actions/artifact":"^6.2.1","@actions/core":"^1.11.1","@actions/exec":"^1.1.1","@actions/tool-cache":"^2.0.2"},"devDependencies":{"@types/node":"24.13.3","@vercel/ncc":"0.38.4","typescript":"5.9.3"},"overrides":{"undici":"^6.27.0","brace-expansion":"5.0.8"}}');
+
+/***/ }),
+
+/***/ 1070:
+/***/ ((module) => {
+
+"use strict";
+module.exports = /*#__PURE__*/JSON.parse('{"schemaVersion":1,"tools":{"bandit":{"provider":"pypi","package":"bandit","version":"1.9.4"},"detekt":{"provider":"github","repository":"detekt/detekt","version":"1.23.7","tagTemplate":"v{version}","assetTemplate":"detekt-cli-{version}-all.jar","sha256":"84beded283012cb2b38bcaef4996452fcd6069d2e9ca74b50eaa79e0ad21897e"},"eslint":{"provider":"npm","package":"eslint","version":"8.57.1"},"findsecbugs":{"provider":"maven","group":"com.h3xstream.findsecbugs","artifact":"findsecbugs-plugin","extension":"jar","version":"1.13.0","sha256":"c239763a8c327b5fb653a34dece6398578bf435b9a32c212bb8e1abe701368a5"},"gitleaks":{"provider":"github","repository":"gitleaks/gitleaks","version":"8.21.0","tagTemplate":"v{version}","assetTemplate":"gitleaks_{version}_linux_x64.tar.gz","sha256":"6c3a240509647225997d31df06e872350e1c0fe2fb85d323ae29a9fef0012586"},"kotlin":{"provider":"github","repository":"JetBrains/kotlin","version":"1.9.24","tagTemplate":"v{version}","assetTemplate":"kotlin-compiler-{version}.zip","sha256":"eb7b68e01029fa67bc8d060ee54c12018f2c60ddc438cf21db14517229aa693b"},"semgrep":{"provider":"pypi","package":"semgrep","version":"1.170.0"},"spotbugs":{"provider":"github","repository":"spotbugs/spotbugs","version":"4.8.6","tagTemplate":"{version}","assetTemplate":"spotbugs-{version}.tgz","sha256":"b9d4d25e53cd4202b2dc19c549c0ff54f8a72fc76a71a8c40dee94422c67ebea"},"trivy":{"provider":"github","repository":"aquasecurity/trivy","version":"0.72.0","tagTemplate":"v{version}","assetTemplate":"trivy_{version}_Linux-64bit.tar.gz","sha256":"bbb64b9695866ce4a7a8f5c9592002c5961cab378577fa3f8a040df362b9b2ea"}}}');
 
 /***/ })
 

@@ -3,8 +3,9 @@ import * as core from "@actions/core";
 import { Finding, EngineResult, Severity } from "../schema";
 import { run, ensurePythonTool } from "../exec";
 import { resolveTarget } from "../target";
+import { TOOLS } from "../tool-versions";
 
-const BANDIT_VERSION = "1.9.4";
+const BANDIT_VERSION = TOOLS.bandit.version;
 
 function mapSeverity(s: string): Severity {
   switch ((s || "").toUpperCase()) {

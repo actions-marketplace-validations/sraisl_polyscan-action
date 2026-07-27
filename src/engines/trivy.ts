@@ -10,9 +10,11 @@ import { Finding, EngineResult, Severity } from "../schema";
 import { run, which } from "../exec";
 import { resolveTarget } from "../target";
 import { cachedTool, downloadVerified } from "../tools";
+import { githubReleaseUrl, TOOLS } from "../tool-versions";
 
-const TRIVY_VERSION = "0.72.0";
-const TRIVY_SHA256 = "bbb64b9695866ce4a7a8f5c9592002c5961cab378577fa3f8a040df362b9b2ea";
+const TRIVY = TOOLS.trivy;
+const TRIVY_VERSION = TRIVY.version;
+const TRIVY_SHA256 = TRIVY.sha256;
 
 function mapSeverity(s: string): Severity {
   switch ((s || "").toUpperCase()) {
@@ -35,7 +37,7 @@ async function ensureTrivy(): Promise<string | null> {
   try {
     return await cachedTool("trivy", TRIVY_VERSION, "trivy", async (directory) => {
       const archive = await downloadVerified(
-        `https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz`,
+        githubReleaseUrl(TRIVY),
         TRIVY_SHA256,
       );
       await tc.extractTar(archive, directory);

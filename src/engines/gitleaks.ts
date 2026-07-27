@@ -9,9 +9,11 @@ import { Finding, EngineResult, Severity } from "../schema";
 import { run, which } from "../exec";
 import { resolveTarget } from "../target";
 import { cachedTool, downloadVerified } from "../tools";
+import { githubReleaseUrl, TOOLS } from "../tool-versions";
 
-const GITLEAKS_VERSION = "8.21.0";
-const GITLEAKS_SHA256 = "6c3a240509647225997d31df06e872350e1c0fe2fb85d323ae29a9fef0012586";
+const GITLEAKS = TOOLS.gitleaks;
+const GITLEAKS_VERSION = GITLEAKS.version;
+const GITLEAKS_SHA256 = GITLEAKS.sha256;
 
 // gitleaks severities in its SARIF are "Critical"/"High"/"Low"/"Info"; map to ours.
 function mapSeverity(level: string): Severity {
@@ -102,7 +104,7 @@ async function ensureGitleaks(): Promise<string | null> {
   try {
     return await cachedTool("gitleaks", GITLEAKS_VERSION, "gitleaks", async (directory) => {
       const archive = await downloadVerified(
-        `https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz`,
+        githubReleaseUrl(GITLEAKS),
         GITLEAKS_SHA256,
       );
       await tc.extractTar(archive, directory);

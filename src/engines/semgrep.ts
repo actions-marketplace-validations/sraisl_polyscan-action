@@ -3,8 +3,9 @@ import * as core from "@actions/core";
 import { Finding, EngineResult, Severity } from "../schema";
 import { run, ensurePythonTool } from "../exec";
 import { resolveTarget } from "../target";
+import { TOOLS } from "../tool-versions";
 
-const SEMGREP_VERSION = "1.170.0";
+const SEMGREP_VERSION = TOOLS.semgrep.version;
 
 function mapSeverity(s: string): Severity {
   switch ((s || "").toUpperCase()) {
