@@ -56,8 +56,10 @@ export function parseTrivyData(data: unknown, imageRef?: string): Finding[] {
       Misconfigurations?: unknown[];
     };
     const artifact = r.Target ?? "unknown";
-    findings.push(...parseVulnerabilities(r.Vulnerabilities ?? [], artifact, imageRef));
-    findings.push(...parseMisconfigurations(r.Misconfigurations ?? [], artifact, imageRef));
+    findings.push(
+      ...parseVulnerabilities(r.Vulnerabilities ?? [], artifact, imageRef),
+      ...parseMisconfigurations(r.Misconfigurations ?? [], artifact, imageRef),
+    );
   }
   return findings;
 }
