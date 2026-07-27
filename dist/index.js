@@ -34492,6 +34492,7 @@ exports.ALL_ENGINES = [
     "trivy",
     "detekt",
     "gitleaks",
+    "gosec",
 ];
 function resolveEngines(input) {
     const raw = input.trim();
@@ -35096,6 +35097,205 @@ async function ensureGitleaks() {
         core.warning(`gitleaks download failed: ${String(err).slice(0, 200)}`);
         return null;
     }
+}
+
+
+/***/ }),
+
+/***/ 7668:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.parseGosecSarif = parseGosecSarif;
+exports.findGoScanRoots = findGoScanRoots;
+exports.runGosec = runGosec;
+// gosec engine adapter for Go security analysis.
+const core = __importStar(__nccwpck_require__(7484));
+const fs = __importStar(__nccwpck_require__(3024));
+const os = __importStar(__nccwpck_require__(8161));
+const path = __importStar(__nccwpck_require__(6760));
+const tc = __importStar(__nccwpck_require__(3472));
+const exec_1 = __nccwpck_require__(3190);
+const target_1 = __nccwpck_require__(6746);
+const tools_1 = __nccwpck_require__(1732);
+const tool_versions_1 = __nccwpck_require__(8947);
+const GOSEC = tool_versions_1.TOOLS.gosec;
+const IGNORED_DIRECTORIES = new Set([
+    ".git",
+    ".gradle",
+    "build",
+    "dist",
+    "node_modules",
+    "target",
+    "vendor",
+]);
+function severityFor(rule, level) {
+    const tags = rule?.properties?.tags ?? [];
+    const gosecSeverity = tags.find((tag) => typeof tag === "string" && ["HIGH", "MEDIUM", "LOW"].includes(tag.toUpperCase()));
+    switch (gosecSeverity?.toUpperCase()) {
+        case "HIGH":
+            return "high";
+        case "MEDIUM":
+            return "medium";
+        case "LOW":
+            return "low";
+        default:
+            if (level === "error")
+                return "high";
+            if (level === "warning")
+                return "medium";
+            return "low";
+    }
+}
+function cweFor(rule) {
+    const target = rule?.relationships?.find((relationship) => relationship.target?.toolComponent?.name === "CWE")?.target;
+    const match = /^(?:CWE-)?(\d+)$/i.exec(target?.id ?? "");
+    return match ? `CWE-${match[1]}` : undefined;
+}
+function findingPath(uri, basePath) {
+    const relative = uri.replace(/^file:\/\//, "");
+    return basePath && relative !== "unknown" ? path.posix.join(basePath, relative) : relative;
+}
+function parseGosecSarif(sarif, basePath = "") {
+    const findings = [];
+    for (const runObj of sarif.runs ?? []) {
+        const rules = runObj.tool?.driver?.rules ?? [];
+        const rulesById = new Map(rules.map((rule) => [rule.id, rule]));
+        for (const result of runObj.results ?? []) {
+            const ruleId = result.ruleId ?? "gosec";
+            const rule = rulesById.get(result.ruleId) ?? rules[result.ruleIndex ?? -1];
+            const location = result.locations?.[0]?.physicalLocation;
+            findings.push({
+                engine: "gosec",
+                ruleId,
+                severity: severityFor(rule, result.level ?? ""),
+                message: result.message?.text ?? ruleId,
+                file: findingPath(location?.artifactLocation?.uri ?? "unknown", basePath),
+                line: location?.region?.startLine ?? 0,
+                column: location?.region?.startColumn,
+                cwe: cweFor(rule),
+            });
+        }
+    }
+    return findings;
+}
+function findGoScanRoots(root) {
+    const moduleRoots = [];
+    let hasGoFiles = false;
+    function walk(directory) {
+        const entries = fs.readdirSync(directory, { withFileTypes: true });
+        if (entries.some((entry) => entry.isFile() && entry.name === "go.mod")) {
+            moduleRoots.push(directory);
+        }
+        if (entries.some((entry) => entry.isFile() && entry.name.endsWith(".go"))) {
+            hasGoFiles = true;
+        }
+        for (const entry of entries) {
+            if (entry.isDirectory() &&
+                !IGNORED_DIRECTORIES.has(entry.name)) {
+                walk(path.join(directory, entry.name));
+            }
+        }
+    }
+    walk(root);
+    if (moduleRoots.length > 0)
+        return moduleRoots;
+    return hasGoFiles ? [root] : [];
+}
+async function ensureGosec() {
+    if (await (0, exec_1.which)("gosec"))
+        return "gosec";
+    core.info(`gosec not found - downloading v${GOSEC.version}...`);
+    try {
+        return await (0, tools_1.cachedTool)("gosec", GOSEC.version, "gosec", async (directory) => {
+            const archive = await (0, tools_1.downloadVerified)((0, tool_versions_1.githubReleaseUrl)(GOSEC), GOSEC.sha256);
+            await tc.extractTar(archive, directory);
+            fs.chmodSync(path.join(directory, "gosec"), 0o700);
+        });
+    }
+    catch (err) {
+        core.warning(`gosec download failed: ${String(err).slice(0, 200)}`);
+        return null;
+    }
+}
+async function runGosec(target) {
+    const abs = (0, target_1.resolveTarget)(target);
+    const scanRoots = findGoScanRoots(abs);
+    if (scanRoots.length === 0) {
+        return { engine: "gosec", findings: [], status: "skipped", note: "no .go files found" };
+    }
+    if (!(await (0, exec_1.which)("go"))) {
+        return { engine: "gosec", findings: [], status: "failed", note: "go not available" };
+    }
+    const bin = await ensureGosec();
+    if (!bin) {
+        return { engine: "gosec", findings: [], status: "failed", note: "gosec not installed" };
+    }
+    const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "polyscan-gosec-"));
+    const findings = [];
+    const failures = [];
+    try {
+        for (const [index, scanRoot] of scanRoots.entries()) {
+            const sarifOut = path.join(workdir, `gosec-${index}.sarif`);
+            const result = await (0, exec_1.run)(bin, ["-fmt", "sarif", "-out", sarifOut, "-no-fail", "./..."], { cwd: scanRoot });
+            if (!fs.existsSync(sarifOut)) {
+                failures.push((result.stderr || result.stdout || `module exited ${result.exitCode}`).slice(0, 200));
+                continue;
+            }
+            try {
+                const sarif = JSON.parse(fs.readFileSync(sarifOut, "utf-8"));
+                const basePath = path.relative(abs, scanRoot).split(path.sep).join("/");
+                findings.push(...parseGosecSarif(sarif, basePath));
+                if (result.exitCode !== 0) {
+                    failures.push((result.stderr || `module exited ${result.exitCode}`).slice(0, 200));
+                }
+            }
+            catch (err) {
+                failures.push(`parse error: ${String(err).slice(0, 200)}`);
+            }
+        }
+    }
+    finally {
+        fs.rmSync(workdir, { recursive: true, force: true });
+    }
+    return failures.length > 0
+        ? { engine: "gosec", findings, status: "failed", note: failures.join("; ").slice(0, 300) }
+        : { engine: "gosec", findings, status: "success" };
 }
 
 
@@ -35949,6 +36149,7 @@ const spotbugs_1 = __nccwpck_require__(240);
 const trivy_1 = __nccwpck_require__(139);
 const detekt_1 = __nccwpck_require__(9308);
 const gitleaks_1 = __nccwpck_require__(6363);
+const gosec_1 = __nccwpck_require__(7668);
 const gate_1 = __nccwpck_require__(1956);
 const sarif_1 = __nccwpck_require__(866);
 const sbom_1 = __nccwpck_require__(594);
@@ -36013,6 +36214,8 @@ async function runEngine(name, target, trivyImage) {
                 return await (0, detekt_1.runDetekt)(target);
             case "gitleaks":
                 return await (0, gitleaks_1.runGitleaks)(target);
+            case "gosec":
+                return await (0, gosec_1.runGosec)(target);
             default:
                 return { engine: name, findings: [], status: "failed", note: "unknown engine" };
         }
@@ -37373,7 +37576,7 @@ module.exports = require("zlib");
 /***/ ((module) => {
 
 "use strict";
-module.exports = /*#__PURE__*/JSON.parse('{"name":"polyscan-action","version":"1.0.0","description":"Multi-language SAST orchestrator as a native TypeScript GitHub Action with Quality Gate, SARIF, CycloneDX SBOM and job summary","main":"dist/index.js","engines":{"node":"24.x"},"scripts":{"prebuild":"node scripts/require-node24.cjs","build":"ncc build src/main.ts -o dist --source-map --license licenses.txt","build:test":"tsc -p tsconfig.test.json","typecheck":"tsc --noEmit","test":"npm run build:test && node --test \\"dist-test/test/**/*.js\\"","all":"npm run typecheck && npm run build","engines:list":"node scripts/engine-tools.mjs list","engines:check":"node scripts/engine-tools.mjs check","engines:update":"node scripts/engine-tools.mjs update"},"keywords":["sast","security","semgrep","bandit","eslint","spotbugs","sarif","sbom","github-action"],"author":"Stefan Raisl","license":"MIT","dependencies":{"@actions/artifact":"^6.2.1","@actions/core":"^1.11.1","@actions/exec":"^1.1.1","@actions/tool-cache":"^2.0.2"},"devDependencies":{"@types/node":"24.13.3","@vercel/ncc":"0.38.4","typescript":"5.9.3"},"overrides":{"undici":"^6.27.0","brace-expansion":"5.0.8"}}');
+module.exports = /*#__PURE__*/JSON.parse('{"name":"polyscan-action","version":"1.0.0","description":"Multi-language SAST orchestrator as a native TypeScript GitHub Action with Quality Gate, SARIF, CycloneDX SBOM and job summary","main":"dist/index.js","engines":{"node":"24.x"},"scripts":{"prebuild":"node scripts/require-node24.cjs","build":"ncc build src/main.ts -o dist --source-map --license licenses.txt","build:test":"tsc -p tsconfig.test.json","typecheck":"tsc --noEmit","test":"npm run build:test && node --test \\"dist-test/test/**/*.js\\"","all":"npm run typecheck && npm run build","engines:list":"node scripts/engine-tools.mjs list","engines:check":"node scripts/engine-tools.mjs check","engines:update":"node scripts/engine-tools.mjs update"},"keywords":["sast","security","semgrep","bandit","eslint","gosec","spotbugs","sarif","sbom","github-action"],"author":"Stefan Raisl","license":"MIT","dependencies":{"@actions/artifact":"^6.2.1","@actions/core":"^1.11.1","@actions/exec":"^1.1.1","@actions/tool-cache":"^2.0.2"},"devDependencies":{"@types/node":"24.13.3","@vercel/ncc":"0.38.4","typescript":"5.9.3"},"overrides":{"undici":"^6.27.0","brace-expansion":"5.0.8"}}');
 
 /***/ }),
 
@@ -37381,7 +37584,7 @@ module.exports = /*#__PURE__*/JSON.parse('{"name":"polyscan-action","version":"1
 /***/ ((module) => {
 
 "use strict";
-module.exports = /*#__PURE__*/JSON.parse('{"schemaVersion":1,"tools":{"bandit":{"provider":"pypi","package":"bandit","version":"1.9.4"},"detekt":{"provider":"github","repository":"detekt/detekt","version":"1.23.7","tagTemplate":"v{version}","assetTemplate":"detekt-cli-{version}-all.jar","sha256":"84beded283012cb2b38bcaef4996452fcd6069d2e9ca74b50eaa79e0ad21897e"},"eslint":{"provider":"npm","package":"eslint","version":"8.57.1"},"findsecbugs":{"provider":"maven","group":"com.h3xstream.findsecbugs","artifact":"findsecbugs-plugin","extension":"jar","version":"1.13.0","sha256":"c239763a8c327b5fb653a34dece6398578bf435b9a32c212bb8e1abe701368a5"},"gitleaks":{"provider":"github","repository":"gitleaks/gitleaks","version":"8.21.0","tagTemplate":"v{version}","assetTemplate":"gitleaks_{version}_linux_x64.tar.gz","sha256":"6c3a240509647225997d31df06e872350e1c0fe2fb85d323ae29a9fef0012586"},"kotlin":{"provider":"github","repository":"JetBrains/kotlin","version":"1.9.24","tagTemplate":"v{version}","assetTemplate":"kotlin-compiler-{version}.zip","sha256":"eb7b68e01029fa67bc8d060ee54c12018f2c60ddc438cf21db14517229aa693b"},"semgrep":{"provider":"pypi","package":"semgrep","version":"1.170.0"},"spotbugs":{"provider":"github","repository":"spotbugs/spotbugs","version":"4.8.6","tagTemplate":"{version}","assetTemplate":"spotbugs-{version}.tgz","sha256":"b9d4d25e53cd4202b2dc19c549c0ff54f8a72fc76a71a8c40dee94422c67ebea"},"trivy":{"provider":"github","repository":"aquasecurity/trivy","version":"0.72.0","tagTemplate":"v{version}","assetTemplate":"trivy_{version}_Linux-64bit.tar.gz","sha256":"bbb64b9695866ce4a7a8f5c9592002c5961cab378577fa3f8a040df362b9b2ea"}}}');
+module.exports = /*#__PURE__*/JSON.parse('{"schemaVersion":1,"tools":{"bandit":{"provider":"pypi","package":"bandit","version":"1.9.4"},"detekt":{"provider":"github","repository":"detekt/detekt","version":"1.23.7","tagTemplate":"v{version}","assetTemplate":"detekt-cli-{version}-all.jar","sha256":"84beded283012cb2b38bcaef4996452fcd6069d2e9ca74b50eaa79e0ad21897e"},"eslint":{"provider":"npm","package":"eslint","version":"8.57.1"},"findsecbugs":{"provider":"maven","group":"com.h3xstream.findsecbugs","artifact":"findsecbugs-plugin","extension":"jar","version":"1.13.0","sha256":"c239763a8c327b5fb653a34dece6398578bf435b9a32c212bb8e1abe701368a5"},"gitleaks":{"provider":"github","repository":"gitleaks/gitleaks","version":"8.21.0","tagTemplate":"v{version}","assetTemplate":"gitleaks_{version}_linux_x64.tar.gz","sha256":"6c3a240509647225997d31df06e872350e1c0fe2fb85d323ae29a9fef0012586"},"gosec":{"provider":"github","repository":"securego/gosec","version":"2.28.0","tagTemplate":"v{version}","assetTemplate":"gosec_{version}_linux_amd64.tar.gz","sha256":"d7882e505b1ff345d458bf0e893eec8019bc849f861ad73a212869540dd505ff"},"kotlin":{"provider":"github","repository":"JetBrains/kotlin","version":"1.9.24","tagTemplate":"v{version}","assetTemplate":"kotlin-compiler-{version}.zip","sha256":"eb7b68e01029fa67bc8d060ee54c12018f2c60ddc438cf21db14517229aa693b"},"semgrep":{"provider":"pypi","package":"semgrep","version":"1.170.0"},"spotbugs":{"provider":"github","repository":"spotbugs/spotbugs","version":"4.8.6","tagTemplate":"{version}","assetTemplate":"spotbugs-{version}.tgz","sha256":"b9d4d25e53cd4202b2dc19c549c0ff54f8a72fc76a71a8c40dee94422c67ebea"},"trivy":{"provider":"github","repository":"aquasecurity/trivy","version":"0.72.0","tagTemplate":"v{version}","assetTemplate":"trivy_{version}_Linux-64bit.tar.gz","sha256":"bbb64b9695866ce4a7a8f5c9592002c5961cab378577fa3f8a040df362b9b2ea"}}}');
 
 /***/ })
 

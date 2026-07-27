@@ -11,11 +11,11 @@ inputs:
     required: false
     default: "."
   engines:
-    description: "Comma-separated engines to run, or 'all': semgrep,bandit,eslint,spotbugs,trivy,detekt,gitleaks"
+    description: "Comma-separated engines to run, or 'all': semgrep,bandit,eslint,spotbugs,trivy,detekt,gitleaks,gosec"
     required: false
     default: "all"
   max-concurrency:
-    description: "Maximum number of read-only engines to run concurrently (1-7); SpotBugs always runs as a serial barrier"
+    description: "Maximum number of read-only engines to run concurrently (1-8); SpotBugs always runs as a serial barrier"
     required: false
     default: "2"
   max-critical:

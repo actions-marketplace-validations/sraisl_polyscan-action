@@ -1,6 +1,6 @@
 # PolyScan Action
 
-**Multi-language SAST as a native GitHub Action.** One step runs all configured security engines — Semgrep, Bandit, ESLint, SpotBugs, detekt, Trivy and gitleaks — normalizes every result into a single schema, enforces a configurable **Quality Gate**, and emits **SARIF**, a **CycloneDX SBOM** and a rich **job summary** — plus optional artifact upload.
+**Multi-language SAST as a native GitHub Action.** One step runs all configured security engines — Semgrep, Bandit, ESLint, SpotBugs, detekt, gosec, Trivy and gitleaks — normalizes every result into a single schema, enforces a configurable **Quality Gate**, and emits **SARIF**, a **CycloneDX SBOM** and a rich **job summary** — plus optional artifact upload.
 
 Written in TypeScript, bundled with `@vercel/ncc`, runs as a native GitHub Action on the `node24` runtime. PolyScan supports Linux x64 runners.
 
@@ -45,8 +45,8 @@ jobs:
 | Input | Default | Description |
 |---|---|---|
 | `target` | `.` | Workspace-contained directory to scan |
-| `engines` | `all` | `all` or comma-separated engines: `semgrep,bandit,eslint,spotbugs,trivy,detekt,gitleaks` |
-| `max-concurrency` | `2` | Maximum concurrent read-only engines (`1`-`7`); SpotBugs runs as a serial barrier |
+| `engines` | `all` | `all` or comma-separated engines: `semgrep,bandit,eslint,spotbugs,trivy,detekt,gitleaks,gosec` |
+| `max-concurrency` | `2` | Maximum concurrent read-only engines (`1`-`8`); SpotBugs runs as a serial barrier |
 | `max-critical` | `0` | Max critical findings before the gate fails |
 | `max-high` | `0` | Max high findings before the gate fails |
 | `max-medium` | `50` | Max medium findings before the gate fails |
@@ -82,10 +82,11 @@ jobs:
 | **Trivy** | deps + IaC | SCA (vulnerable dependencies / CVEs) + misconfig; binary downloaded on demand |
 | **detekt** | Kotlin | Kotlin-native static analysis (incl. security rules) via detekt CLI; SARIF parsed |
 | **gitleaks** | git history + working tree | Secret / credential detection (API keys, tokens, passwords) via gitleaks CLI; SARIF parsed |
+| **gosec** | Go | Go-native security analysis; scans each detected Go module and preserves native severity and CWE data from SARIF |
 
-Python engines are installed into isolated, version-pinned environments; downloaded tools are cached and verified with SHA-256. SpotBugs is **build-aware** — for real Java/Kotlin projects it invokes the project's own build (Maven/Gradle) so the full dependency classpath is available, which is required to detect data-flow bugs (SQLi, command injection) on **Java** (FindSecBugs does not target Kotlin bytecode). For **Kotlin** code-security use **detekt**, which analyzes Kotlin source natively. Trivy runs `--offline-scan` to avoid Maven Central rate limits.
+Python engines are installed into isolated, version-pinned environments; downloaded tools are cached and verified with SHA-256. SpotBugs is **build-aware** — for real Java/Kotlin projects it invokes the project's own build (Maven/Gradle) so the full dependency classpath is available, which is required to detect data-flow bugs (SQLi, command injection) on **Java** (FindSecBugs does not target Kotlin bytecode). For **Kotlin** code-security use **detekt**, which analyzes Kotlin source natively. gosec is downloaded only when Go files are present and requires the Go toolchain available on the runner. Trivy runs `--offline-scan` to avoid Maven Central rate limits.
 
-**Default: all engines run** (`engines: "all"` expands to `semgrep,bandit,eslint,spotbugs,trivy,detekt,gitleaks`). Restrict via the `engines` input, e.g. `engines: "spotbugs,trivy,detekt"`.
+**Default: all engines run** (`engines: "all"` expands to `semgrep,bandit,eslint,spotbugs,trivy,detekt,gitleaks,gosec`). Restrict via the `engines` input, e.g. `engines: "gosec,trivy,gitleaks"`.
 
 Read-only engines run with bounded concurrency (`max-concurrency`, default `2`). SpotBugs may invoke a project build and therefore runs as a serial barrier: all earlier engines finish before it starts, and later engines start only after it completes.
 
@@ -98,6 +99,7 @@ npm run engines:list
 npm run engines:check
 npm run engines:check -- trivy semgrep
 npm run engines:update -- trivy 0.73.0
+npm run engines:update -- gosec 2.28.0
 ```
 
 `engines:check` only reads official provider metadata. `engines:update` requires an explicit version, validates it against GitHub Releases, PyPI, npm, or Maven Central, verifies downloaded binary artifacts against provider checksums, updates the lock file, then runs the typecheck, tests, and production bundle build. Use `--dry-run` to verify an update without writing files. `--skip-project-checks` skips only the local typecheck, tests, and build; provider and artifact verification always remain enabled.

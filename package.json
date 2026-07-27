@@ -23,6 +23,7 @@
     "semgrep",
     "bandit",
     "eslint",
+    "gosec",
     "spotbugs",
     "sarif",
     "sbom",

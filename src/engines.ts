@@ -6,6 +6,7 @@ export const ALL_ENGINES = [
   "trivy",
   "detekt",
   "gitleaks",
+  "gosec",
 ] as const;
 
 export type EngineName = (typeof ALL_ENGINES)[number];

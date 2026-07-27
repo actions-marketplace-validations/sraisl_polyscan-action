@@ -14,6 +14,7 @@ const EXPECTED_TOOLS = [
   "eslint",
   "findsecbugs",
   "gitleaks",
+  "gosec",
   "kotlin",
   "semgrep",
   "spotbugs",
@@ -29,7 +30,15 @@ test("tool lock contains every scanner dependency", () => {
 });
 
 test("downloaded binary tools have pinned SHA-256 digests", () => {
-  for (const name of ["detekt", "findsecbugs", "gitleaks", "kotlin", "spotbugs", "trivy"] as const) {
+  for (const name of [
+    "detekt",
+    "findsecbugs",
+    "gitleaks",
+    "gosec",
+    "kotlin",
+    "spotbugs",
+    "trivy",
+  ] as const) {
     assert.match(TOOLS[name].sha256, /^[a-f0-9]{64}$/);
   }
 });
@@ -42,6 +51,10 @@ test("tool metadata expands to the existing download URLs", () => {
   assert.equal(
     githubReleaseUrl(TOOLS.spotbugs),
     "https://github.com/spotbugs/spotbugs/releases/download/4.8.6/spotbugs-4.8.6.tgz",
+  );
+  assert.equal(
+    githubReleaseUrl(TOOLS.gosec),
+    "https://github.com/securego/gosec/releases/download/v2.28.0/gosec_2.28.0_linux_amd64.tar.gz",
   );
   assert.equal(
     mavenArtifactUrl(TOOLS.findsecbugs),
