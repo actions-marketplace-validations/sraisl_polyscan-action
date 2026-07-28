@@ -59,10 +59,10 @@
     "spotbugs": {
       "provider": "github",
       "repository": "spotbugs/spotbugs",
-      "version": "4.8.6",
+      "version": "4.9.8",
       "tagTemplate": "{version}",
       "assetTemplate": "spotbugs-{version}.tgz",
-      "sha256": "b9d4d25e53cd4202b2dc19c549c0ff54f8a72fc76a71a8c40dee94422c67ebea"
+      "sha256": "2eb8e0f2b223c22ffa2ce0c1cf1be4127dde19d240b8f7ce69a5fd3ad5c36ff3"
     },
     "trivy": {
       "provider": "github",
