@@ -50,7 +50,7 @@ test("tool metadata expands to the existing download URLs", () => {
   );
   assert.equal(
     githubReleaseUrl(TOOLS.spotbugs),
-    "https://github.com/spotbugs/spotbugs/releases/download/4.8.6/spotbugs-4.8.6.tgz",
+    "https://github.com/spotbugs/spotbugs/releases/download/4.9.8/spotbugs-4.9.8.tgz",
   );
   assert.equal(
     githubReleaseUrl(TOOLS.gosec),
