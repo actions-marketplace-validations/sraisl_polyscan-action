@@ -89071,6 +89071,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.run = run;
+exports.resolveExecutable = resolveExecutable;
 exports.which = which;
 exports.ensurePythonTool = ensurePythonTool;
 // Shared helper to run an external command and capture stdout/stderr,
@@ -89111,16 +89112,35 @@ async function run(command, args, options = {}) {
     }
     return { exitCode, stdout, stderr };
 }
-// Check whether a binary is available on PATH.
+// Resolve against the same PATH inherited by direct child processes. A login
+// shell may source profile files and report tools that @actions/exec cannot see.
+function resolveExecutable(tool, searchPath = process.env.PATH ?? "") {
+    const candidates = tool.includes(path.sep)
+        ? [path.resolve(tool)]
+        : searchPath.split(path.delimiter).map((directory) => path.resolve(directory || ".", tool));
+    for (const candidate of candidates) {
+        try {
+            fs.accessSync(candidate, fs.constants.X_OK);
+            if (fs.statSync(candidate).isFile())
+                return candidate;
+        }
+        catch {
+            // Continue searching PATH.
+        }
+    }
+    return null;
+}
+// Check whether a binary is available to direct child processes.
 async function which(tool) {
-    const res = await run("bash", ["-lc", `command -v ${tool} >/dev/null 2>&1`]);
-    return res.exitCode === 0;
+    return resolveExecutable(tool) !== null;
 }
 // Python virtual environments contain absolute shebangs and cannot be moved
 // into the tool cache. Keep the isolated environment alive for exactly one scan.
 async function ensurePythonTool(tool, version, label, core) {
-    if (await which(tool))
-        return { executable: tool, cleanup: () => undefined };
+    const existingExecutable = resolveExecutable(tool);
+    if (existingExecutable) {
+        return { executable: existingExecutable, cleanup: () => undefined };
+    }
     core.info(`${label} not found — installing ${tool}==${version} in an isolated environment…`);
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), `polyscan-${tool}-`));
     try {

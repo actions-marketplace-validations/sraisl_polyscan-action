@@ -45,10 +45,30 @@ export async function run(
   return { exitCode, stdout, stderr };
 }
 
-// Check whether a binary is available on PATH.
+// Resolve against the same PATH inherited by direct child processes. A login
+// shell may source profile files and report tools that @actions/exec cannot see.
+export function resolveExecutable(
+  tool: string,
+  searchPath: string = process.env.PATH ?? "",
+): string | null {
+  const candidates = tool.includes(path.sep)
+    ? [path.resolve(tool)]
+    : searchPath.split(path.delimiter).map((directory) => path.resolve(directory || ".", tool));
+
+  for (const candidate of candidates) {
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK);
+      if (fs.statSync(candidate).isFile()) return candidate;
+    } catch {
+      // Continue searching PATH.
+    }
+  }
+  return null;
+}
+
+// Check whether a binary is available to direct child processes.
 export async function which(tool: string): Promise<boolean> {
-  const res = await run("bash", ["-lc", `command -v ${tool} >/dev/null 2>&1`]);
-  return res.exitCode === 0;
+  return resolveExecutable(tool) !== null;
 }
 
 export interface PreparedTool {
@@ -64,7 +84,10 @@ export async function ensurePythonTool(
   label: string,
   core: { info: (s: string) => void; warning: (s: string) => void },
 ): Promise<PreparedTool | null> {
-  if (await which(tool)) return { executable: tool, cleanup: () => undefined };
+  const existingExecutable = resolveExecutable(tool);
+  if (existingExecutable) {
+    return { executable: existingExecutable, cleanup: () => undefined };
+  }
 
   core.info(`${label} not found — installing ${tool}==${version} in an isolated environment…`);
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), `polyscan-${tool}-`));
