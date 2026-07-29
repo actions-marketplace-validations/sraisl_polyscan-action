@@ -1,0 +1,9 @@
+rules:
+  - id: polyscan-test-eval
+    languages:
+      - python
+    message: Dynamic eval is unsafe
+    severity: ERROR
+    metadata:
+      cwe: CWE-95
+    pattern: eval(...)

@@ -27,6 +27,7 @@ test("engine tools list prints every locked tool", () => {
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /^tool\tprovider\tversion/m);
   assert.match(result.stdout, /^gosec\tgithub\t2\.28\.0$/m);
+  assert.match(result.stdout, /^opengrep\tgithub\t1\.26\.0$/m);
   assert.match(result.stdout, /^semgrep\tpypi\t1\.170\.0$/m);
   assert.match(result.stdout, /^trivy\tgithub\t0\.72\.0$/m);
 });

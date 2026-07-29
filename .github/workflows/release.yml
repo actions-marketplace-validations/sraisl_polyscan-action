@@ -32,10 +32,16 @@ jobs:
       - name: Install
         run: npm ci
 
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
       - name: Build dist (verify it matches committed)
         run: |
           npm run build
-          if [ -n "$(git status --porcelain dist | grep -v '\.map$')" ]; then
+          if git status --porcelain dist | grep -qv '\.map$'; then
             echo "::error::dist runtime files differ from source."
             git diff --stat dist
             exit 1

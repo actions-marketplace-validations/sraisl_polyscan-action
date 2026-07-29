@@ -6,6 +6,7 @@ import { DefaultArtifactClient } from "@actions/artifact";
 
 import { Finding, EngineResult, countBySeverity } from "./schema";
 import { runSemgrep } from "./engines/semgrep";
+import { runOpengrep } from "./engines/opengrep";
 import { runBandit } from "./engines/bandit";
 import { runEslint } from "./engines/eslint";
 import { runSpotbugs } from "./engines/spotbugs";
@@ -17,7 +18,7 @@ import { evaluateGate } from "./gate";
 import { toSarif } from "./sarif";
 import { toSbom } from "./sbom";
 import { renderSummary } from "./summary";
-import { resolveEngines, unknownEngines, ALL_ENGINES } from "./engines";
+import { resolveEngines, unknownEngines, SUPPORTED_ENGINES } from "./engines";
 import { normalizeFindingPath, resolveOutputDir, resolveTarget } from "./target";
 import { assertSupportedPlatform } from "./tools";
 import { mapConcurrentWithBarriers, parseMaxConcurrency } from "./scheduler";
@@ -49,6 +50,7 @@ interface ActionConfig {
   maxConcurrency: number;
   outputDir: string;
   trivyImage?: string;
+  opengrepConfig: string;
   gate: {
     maxCritical: number;
     maxHigh: number;
@@ -61,7 +63,7 @@ function readConfig(): ActionConfig {
   const unknown = unknownEngines(engines);
   if (unknown.length > 0) {
     throw new Error(
-      `Unknown engine(s): ${unknown.join(", ")}. Valid engines: ${ALL_ENGINES.join(", ")}`,
+      `Unknown engine(s): ${unknown.join(", ")}. Valid engines: ${SUPPORTED_ENGINES.join(", ")}`,
     );
   }
 
@@ -77,10 +79,11 @@ function readConfig(): ActionConfig {
     maxConcurrency: parseMaxConcurrency(
       core.getInput("max-concurrency"),
       DEFAULT_MAX_CONCURRENCY,
-      ALL_ENGINES.length,
+      SUPPORTED_ENGINES.length,
     ),
     outputDir: resolveOutputDir(core.getInput("output-dir") || "."),
     trivyImage: core.getInput("trivy-image") || undefined,
+    opengrepConfig: core.getInput("opengrep-config") || "auto",
     gate: {
       maxCritical: intInput("max-critical", 0),
       maxHigh: intInput("max-high", 0),
@@ -89,11 +92,18 @@ function readConfig(): ActionConfig {
   };
 }
 
-async function runEngine(name: string, target: string, trivyImage?: string): Promise<EngineResult> {
+async function runEngine(
+  name: string,
+  target: string,
+  trivyImage: string | undefined,
+  opengrepConfig: string,
+): Promise<EngineResult> {
   try {
     switch (name) {
       case "semgrep":
         return await runSemgrep(target);
+      case "opengrep":
+        return await runOpengrep(target, opengrepConfig);
       case "bandit":
         return await runBandit(target);
       case "eslint":
@@ -146,7 +156,12 @@ async function runEngines(config: ActionConfig): Promise<EngineResult[]> {
     async (engine) => {
       core.info(`[${engine}] started`);
       const startedAt = Date.now();
-      const result = await runEngine(engine, config.target, config.trivyImage);
+      const result = await runEngine(
+        engine,
+        config.target,
+        config.trivyImage,
+        config.opengrepConfig,
+      );
       normalizeEngineFindings(result, config.target);
       const elapsedSeconds = ((Date.now() - startedAt) / 1000).toFixed(1);
       core.info(

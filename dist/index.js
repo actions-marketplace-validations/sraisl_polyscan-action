@@ -87563,11 +87563,22 @@ ZipStream.prototype.finalize = function() {
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.ALL_ENGINES = void 0;
+exports.SUPPORTED_ENGINES = exports.DEFAULT_ENGINES = void 0;
 exports.resolveEngines = resolveEngines;
 exports.unknownEngines = unknownEngines;
-exports.ALL_ENGINES = [
+exports.DEFAULT_ENGINES = [
     "semgrep",
+    "bandit",
+    "eslint",
+    "spotbugs",
+    "trivy",
+    "detekt",
+    "gitleaks",
+    "gosec",
+];
+exports.SUPPORTED_ENGINES = [
+    "semgrep",
+    "opengrep",
     "bandit",
     "eslint",
     "spotbugs",
@@ -87579,7 +87590,7 @@ exports.ALL_ENGINES = [
 function resolveEngines(input) {
     const raw = input.trim();
     if (raw === "" || raw.toLowerCase() === "all") {
-        return [...exports.ALL_ENGINES];
+        return [...exports.DEFAULT_ENGINES];
     }
     return raw
         .split(",")
@@ -87587,7 +87598,7 @@ function resolveEngines(input) {
         .filter(Boolean);
 }
 function unknownEngines(engines) {
-    return engines.filter((e) => !exports.ALL_ENGINES.includes(e));
+    return engines.filter((e) => !exports.SUPPORTED_ENGINES.includes(e));
 }
 
 
@@ -88383,6 +88394,176 @@ async function runGosec(target) {
 
 /***/ }),
 
+/***/ 16699:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.parseOpengrepJson = parseOpengrepJson;
+exports.runOpengrep = runOpengrep;
+// OpenGrep engine adapter — downloads a pinned standalone binary and parses
+// Semgrep-compatible JSON output.
+const core = __importStar(__nccwpck_require__(37484));
+const fs = __importStar(__nccwpck_require__(73024));
+const path = __importStar(__nccwpck_require__(76760));
+const exec_1 = __nccwpck_require__(73190);
+const target_1 = __nccwpck_require__(76746);
+const tools_1 = __nccwpck_require__(51732);
+const tool_versions_1 = __nccwpck_require__(88947);
+const semgrep_json_1 = __nccwpck_require__(7903);
+const OPENGREP = tool_versions_1.TOOLS.opengrep;
+function parseOpengrepJson(stdout) {
+    return (0, semgrep_json_1.parseSemgrepCompatibleJson)(stdout, "opengrep", "opengrep-rule", "OpenGrep finding");
+}
+async function ensureOpengrep() {
+    const existing = (0, exec_1.resolveExecutable)("opengrep");
+    if (existing) {
+        const pinned = await (0, exec_1.resolvePinnedExecutable)("opengrep", OPENGREP.version, ["--version", "--disable-version-check"]);
+        if (pinned)
+            return pinned;
+        core.warning(`Ignoring OpenGrep from PATH because it is not the pinned version ${OPENGREP.version}`);
+    }
+    core.info(`OpenGrep ${OPENGREP.version} not found - downloading verified binary...`);
+    try {
+        return await (0, tools_1.cachedTool)("opengrep", OPENGREP.version, "opengrep", async (directory) => {
+            const downloaded = await (0, tools_1.downloadVerified)((0, tool_versions_1.githubReleaseUrl)(OPENGREP), OPENGREP.sha256);
+            const executable = path.join(directory, "opengrep");
+            fs.copyFileSync(downloaded, executable);
+            fs.chmodSync(executable, 0o700);
+        });
+    }
+    catch (err) {
+        core.warning(`OpenGrep download failed: ${String(err).slice(0, 200)}`);
+        return null;
+    }
+}
+async function runOpengrep(target, config) {
+    const executable = await ensureOpengrep();
+    if (!executable) {
+        return { engine: "opengrep", findings: [], status: "failed", note: "opengrep not installed" };
+    }
+    const result = await (0, exec_1.run)(executable, [
+        "scan",
+        "--config",
+        config,
+        "--json",
+        "--quiet",
+        "--no-git-ignore",
+        (0, target_1.resolveTarget)(target),
+    ]);
+    if (result.exitCode !== 0) {
+        return {
+            engine: "opengrep",
+            findings: [],
+            status: "failed",
+            note: result.stderr.slice(0, 300) || `opengrep exited ${result.exitCode}`,
+        };
+    }
+    if (!result.stdout.trim()) {
+        return {
+            engine: "opengrep",
+            findings: [],
+            status: "failed",
+            note: result.stderr.slice(0, 300) || "opengrep produced no output",
+        };
+    }
+    try {
+        return {
+            engine: "opengrep",
+            findings: parseOpengrepJson(result.stdout),
+            status: "success",
+        };
+    }
+    catch (err) {
+        return {
+            engine: "opengrep",
+            findings: [],
+            status: "failed",
+            note: `parse error: ${String(err).slice(0, 200)}`,
+        };
+    }
+}
+
+
+/***/ }),
+
+/***/ 7903:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.parseSemgrepCompatibleJson = parseSemgrepCompatibleJson;
+function mapSeverity(severity) {
+    switch ((severity || "").toUpperCase()) {
+        case "ERROR":
+            return "high";
+        case "WARNING":
+            return "medium";
+        case "INFO":
+            return "low";
+        default:
+            return "medium";
+    }
+}
+function parseSemgrepCompatibleJson(stdout, engine, fallbackRuleId, fallbackMessage) {
+    const findings = [];
+    const data = JSON.parse(stdout);
+    for (const result of data.results ?? []) {
+        const metadata = result.extra?.metadata ?? {};
+        const cweRaw = metadata.cwe;
+        const cwe = Array.isArray(cweRaw) ? cweRaw[0] : cweRaw;
+        findings.push({
+            engine,
+            ruleId: String(result.check_id ?? fallbackRuleId).split(".").pop() || fallbackRuleId,
+            severity: mapSeverity(result.extra?.severity),
+            message: result.extra?.message?.trim() || fallbackMessage,
+            file: result.path,
+            line: result.start?.line ?? 0,
+            column: result.start?.col,
+            cwe: cwe ? /CWE-\d+/.exec(String(cwe))?.[0] : undefined,
+        });
+    }
+    return findings;
+}
+
+
+/***/ }),
+
 /***/ 70840:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -88429,41 +88610,13 @@ const core = __importStar(__nccwpck_require__(37484));
 const exec_1 = __nccwpck_require__(73190);
 const target_1 = __nccwpck_require__(76746);
 const tool_versions_1 = __nccwpck_require__(88947);
+const semgrep_json_1 = __nccwpck_require__(7903);
 const SEMGREP_VERSION = tool_versions_1.TOOLS.semgrep.version;
-function mapSeverity(s) {
-    switch ((s || "").toUpperCase()) {
-        case "ERROR":
-            return "high";
-        case "WARNING":
-            return "medium";
-        case "INFO":
-            return "low";
-        default:
-            return "medium";
-    }
-}
 async function ensureInstalled() {
     return (0, exec_1.ensurePythonTool)("semgrep", SEMGREP_VERSION, "semgrep", core);
 }
 function parseSemgrepJson(stdout) {
-    const findings = [];
-    const data = JSON.parse(stdout);
-    for (const r of data.results ?? []) {
-        const meta = r.extra?.metadata ?? {};
-        const cweRaw = meta.cwe;
-        const cwe = Array.isArray(cweRaw) ? cweRaw[0] : cweRaw;
-        findings.push({
-            engine: "semgrep",
-            ruleId: String(r.check_id ?? "semgrep-rule").split(".").pop() || "semgrep-rule",
-            severity: mapSeverity(r.extra?.severity),
-            message: r.extra?.message?.trim() || "Semgrep finding",
-            file: r.path,
-            line: r.start?.line ?? 0,
-            column: r.start?.col,
-            cwe: cwe ? /CWE-\d+/.exec(String(cwe))?.[0] : undefined,
-        });
-    }
-    return findings;
+    return (0, semgrep_json_1.parseSemgrepCompatibleJson)(stdout, "semgrep", "semgrep-rule", "Semgrep finding");
 }
 async function runSemgrep(target) {
     const tool = await ensureInstalled();
@@ -89072,6 +89225,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.run = run;
 exports.resolveExecutable = resolveExecutable;
+exports.resolvePinnedExecutable = resolvePinnedExecutable;
 exports.which = which;
 exports.ensurePythonTool = ensurePythonTool;
 // Shared helper to run an external command and capture stdout/stderr,
@@ -89129,6 +89283,16 @@ function resolveExecutable(tool, searchPath = process.env.PATH ?? "") {
         }
     }
     return null;
+}
+async function resolvePinnedExecutable(tool, expectedVersion, versionArgs = ["--version"], searchPath = process.env.PATH ?? "") {
+    const executable = resolveExecutable(tool, searchPath);
+    if (!executable)
+        return null;
+    const result = await run(executable, versionArgs);
+    if (result.exitCode !== 0)
+        return null;
+    const match = /^v?(\d+(?:\.\d+)+)(?:\s|$)/.exec(result.stdout.trim());
+    return match?.[1] === expectedVersion ? executable : null;
 }
 // Check whether a binary is available to direct child processes.
 async function which(tool) {
@@ -89246,6 +89410,7 @@ const path = __importStar(__nccwpck_require__(76760));
 const artifact_1 = __nccwpck_require__(76846);
 const schema_1 = __nccwpck_require__(75060);
 const semgrep_1 = __nccwpck_require__(70840);
+const opengrep_1 = __nccwpck_require__(16699);
 const bandit_1 = __nccwpck_require__(59429);
 const eslint_1 = __nccwpck_require__(20690);
 const spotbugs_1 = __nccwpck_require__(70240);
@@ -89279,7 +89444,7 @@ function readConfig() {
     const engines = (0, engines_1.resolveEngines)(core.getInput("engines"));
     const unknown = (0, engines_1.unknownEngines)(engines);
     if (unknown.length > 0) {
-        throw new Error(`Unknown engine(s): ${unknown.join(", ")}. Valid engines: ${engines_1.ALL_ENGINES.join(", ")}`);
+        throw new Error(`Unknown engine(s): ${unknown.join(", ")}. Valid engines: ${engines_1.SUPPORTED_ENGINES.join(", ")}`);
     }
     return {
         target: (0, target_1.resolveTarget)(core.getInput("target") || "."),
@@ -89290,9 +89455,10 @@ function readConfig() {
         wantSbom: boolInput("sbom", false),
         uploadArtifacts: boolInput("upload-artifacts", true),
         uploadSarif: boolInput("upload-sarif", false),
-        maxConcurrency: (0, scheduler_1.parseMaxConcurrency)(core.getInput("max-concurrency"), DEFAULT_MAX_CONCURRENCY, engines_1.ALL_ENGINES.length),
+        maxConcurrency: (0, scheduler_1.parseMaxConcurrency)(core.getInput("max-concurrency"), DEFAULT_MAX_CONCURRENCY, engines_1.SUPPORTED_ENGINES.length),
         outputDir: (0, target_1.resolveOutputDir)(core.getInput("output-dir") || "."),
         trivyImage: core.getInput("trivy-image") || undefined,
+        opengrepConfig: core.getInput("opengrep-config") || "auto",
         gate: {
             maxCritical: intInput("max-critical", 0),
             maxHigh: intInput("max-high", 0),
@@ -89300,11 +89466,13 @@ function readConfig() {
         },
     };
 }
-async function runEngine(name, target, trivyImage) {
+async function runEngine(name, target, trivyImage, opengrepConfig) {
     try {
         switch (name) {
             case "semgrep":
                 return await (0, semgrep_1.runSemgrep)(target);
+            case "opengrep":
+                return await (0, opengrep_1.runOpengrep)(target, opengrepConfig);
             case "bandit":
                 return await (0, bandit_1.runBandit)(target);
             case "eslint":
@@ -89349,7 +89517,7 @@ async function runEngines(config) {
     return (0, scheduler_1.mapConcurrentWithBarriers)(config.engines, config.maxConcurrency, (engine) => engine === "spotbugs", async (engine) => {
         core.info(`[${engine}] started`);
         const startedAt = Date.now();
-        const result = await runEngine(engine, config.target, config.trivyImage);
+        const result = await runEngine(engine, config.target, config.trivyImage, config.opengrepConfig);
         normalizeEngineFindings(result, config.target);
         const elapsedSeconds = ((Date.now() - startedAt) / 1000).toFixed(1);
         core.info(`[${engine}] completed in ${elapsedSeconds}s: ${result.findings.length} findings ` +
@@ -146741,7 +146909,7 @@ module.exports = /*#__PURE__*/JSON.parse('{"name":"@actions/artifact","version":
 /***/ ((module) => {
 
 "use strict";
-module.exports = /*#__PURE__*/JSON.parse('{"name":"polyscan-action","version":"1.0.0","description":"Multi-language SAST orchestrator as a native TypeScript GitHub Action with Quality Gate, SARIF, CycloneDX SBOM and job summary","main":"dist/index.js","engines":{"node":"24.x"},"scripts":{"prebuild":"node scripts/require-node24.cjs","build":"ncc build src/main.ts -o dist --source-map --license licenses.txt && node scripts/check-bundle.cjs","build:test":"tsc -p tsconfig.test.json","typecheck":"tsc --noEmit","test":"npm run build:test && node --test \\"dist-test/test/**/*.js\\"","all":"npm run typecheck && npm run build","engines:list":"node scripts/engine-tools.mjs list","engines:check":"node scripts/engine-tools.mjs check","engines:update":"node scripts/engine-tools.mjs update"},"keywords":["sast","security","semgrep","bandit","eslint","gosec","spotbugs","sarif","sbom","github-action"],"author":"Stefan Raisl","license":"MIT","dependencies":{"@actions/artifact":"^5.0.3","@actions/core":"^1.11.1","@actions/exec":"^1.1.1","@actions/tool-cache":"^2.0.2"},"devDependencies":{"@types/node":"24.13.3","@vercel/ncc":"0.38.4","typescript":"5.9.3"},"overrides":{"undici":"^6.27.0","brace-expansion":"5.0.8"}}');
+module.exports = /*#__PURE__*/JSON.parse('{"name":"polyscan-action","version":"1.0.0","description":"Multi-language SAST orchestrator as a native TypeScript GitHub Action with Quality Gate, SARIF, CycloneDX SBOM and job summary","main":"dist/index.js","engines":{"node":"24.x"},"scripts":{"prebuild":"node scripts/require-node24.cjs","build":"ncc build src/main.ts -o dist --source-map --license licenses.txt && node scripts/check-bundle.cjs","build:test":"tsc -p tsconfig.test.json","typecheck":"tsc --noEmit","test":"npm run build:test && node --test \\"dist-test/test/**/*.js\\"","all":"npm run typecheck && npm run build","engines:list":"node scripts/engine-tools.mjs list","engines:check":"node scripts/engine-tools.mjs check","engines:update":"node scripts/engine-tools.mjs update"},"keywords":["sast","security","semgrep","opengrep","bandit","eslint","gosec","spotbugs","sarif","sbom","github-action"],"author":"Stefan Raisl","license":"MIT","dependencies":{"@actions/artifact":"^5.0.3","@actions/core":"^1.11.1","@actions/exec":"^1.1.1","@actions/tool-cache":"^2.0.2"},"devDependencies":{"@types/node":"24.13.3","@vercel/ncc":"0.38.4","typescript":"5.9.3"},"overrides":{"undici":"^6.27.0","brace-expansion":"5.0.8"}}');
 
 /***/ }),
 
@@ -146749,7 +146917,7 @@ module.exports = /*#__PURE__*/JSON.parse('{"name":"polyscan-action","version":"1
 /***/ ((module) => {
 
 "use strict";
-module.exports = /*#__PURE__*/JSON.parse('{"schemaVersion":1,"tools":{"bandit":{"provider":"pypi","package":"bandit","version":"1.9.4"},"detekt":{"provider":"github","repository":"detekt/detekt","version":"1.23.7","tagTemplate":"v{version}","assetTemplate":"detekt-cli-{version}-all.jar","sha256":"84beded283012cb2b38bcaef4996452fcd6069d2e9ca74b50eaa79e0ad21897e"},"eslint":{"provider":"npm","package":"eslint","version":"8.57.1"},"findsecbugs":{"provider":"maven","group":"com.h3xstream.findsecbugs","artifact":"findsecbugs-plugin","extension":"jar","version":"1.13.0","sha256":"c239763a8c327b5fb653a34dece6398578bf435b9a32c212bb8e1abe701368a5"},"gitleaks":{"provider":"github","repository":"gitleaks/gitleaks","version":"8.21.0","tagTemplate":"v{version}","assetTemplate":"gitleaks_{version}_linux_x64.tar.gz","sha256":"6c3a240509647225997d31df06e872350e1c0fe2fb85d323ae29a9fef0012586"},"gosec":{"provider":"github","repository":"securego/gosec","version":"2.28.0","tagTemplate":"v{version}","assetTemplate":"gosec_{version}_linux_amd64.tar.gz","sha256":"d7882e505b1ff345d458bf0e893eec8019bc849f861ad73a212869540dd505ff"},"kotlin":{"provider":"github","repository":"JetBrains/kotlin","version":"1.9.24","tagTemplate":"v{version}","assetTemplate":"kotlin-compiler-{version}.zip","sha256":"eb7b68e01029fa67bc8d060ee54c12018f2c60ddc438cf21db14517229aa693b"},"semgrep":{"provider":"pypi","package":"semgrep","version":"1.170.0"},"spotbugs":{"provider":"github","repository":"spotbugs/spotbugs","version":"4.9.8","tagTemplate":"{version}","assetTemplate":"spotbugs-{version}.tgz","sha256":"2eb8e0f2b223c22ffa2ce0c1cf1be4127dde19d240b8f7ce69a5fd3ad5c36ff3"},"trivy":{"provider":"github","repository":"aquasecurity/trivy","version":"0.72.0","tagTemplate":"v{version}","assetTemplate":"trivy_{version}_Linux-64bit.tar.gz","sha256":"bbb64b9695866ce4a7a8f5c9592002c5961cab378577fa3f8a040df362b9b2ea"}}}');
+module.exports = /*#__PURE__*/JSON.parse('{"schemaVersion":1,"tools":{"bandit":{"provider":"pypi","package":"bandit","version":"1.9.4"},"detekt":{"provider":"github","repository":"detekt/detekt","version":"1.23.7","tagTemplate":"v{version}","assetTemplate":"detekt-cli-{version}-all.jar","sha256":"84beded283012cb2b38bcaef4996452fcd6069d2e9ca74b50eaa79e0ad21897e"},"eslint":{"provider":"npm","package":"eslint","version":"8.57.1"},"findsecbugs":{"provider":"maven","group":"com.h3xstream.findsecbugs","artifact":"findsecbugs-plugin","extension":"jar","version":"1.13.0","sha256":"c239763a8c327b5fb653a34dece6398578bf435b9a32c212bb8e1abe701368a5"},"gitleaks":{"provider":"github","repository":"gitleaks/gitleaks","version":"8.21.0","tagTemplate":"v{version}","assetTemplate":"gitleaks_{version}_linux_x64.tar.gz","sha256":"6c3a240509647225997d31df06e872350e1c0fe2fb85d323ae29a9fef0012586"},"gosec":{"provider":"github","repository":"securego/gosec","version":"2.28.0","tagTemplate":"v{version}","assetTemplate":"gosec_{version}_linux_amd64.tar.gz","sha256":"d7882e505b1ff345d458bf0e893eec8019bc849f861ad73a212869540dd505ff"},"kotlin":{"provider":"github","repository":"JetBrains/kotlin","version":"1.9.24","tagTemplate":"v{version}","assetTemplate":"kotlin-compiler-{version}.zip","sha256":"eb7b68e01029fa67bc8d060ee54c12018f2c60ddc438cf21db14517229aa693b"},"opengrep":{"provider":"github","repository":"opengrep/opengrep","version":"1.26.0","tagTemplate":"v{version}","assetTemplate":"opengrep_manylinux_x86","sha256":"40c21299eeddabf743b856daa843d24f9d4a027130671cd45b3b21776fd9ab26"},"semgrep":{"provider":"pypi","package":"semgrep","version":"1.170.0"},"spotbugs":{"provider":"github","repository":"spotbugs/spotbugs","version":"4.9.8","tagTemplate":"{version}","assetTemplate":"spotbugs-{version}.tgz","sha256":"2eb8e0f2b223c22ffa2ce0c1cf1be4127dde19d240b8f7ce69a5fd3ad5c36ff3"},"trivy":{"provider":"github","repository":"aquasecurity/trivy","version":"0.72.0","tagTemplate":"v{version}","assetTemplate":"trivy_{version}_Linux-64bit.tar.gz","sha256":"bbb64b9695866ce4a7a8f5c9592002c5961cab378577fa3f8a040df362b9b2ea"}}}');
 
 /***/ })
 

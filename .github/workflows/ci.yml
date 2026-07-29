@@ -21,7 +21,7 @@ jobs:
         run: |
           npm run build
           # Runtime bundle files must match; source maps are not deterministic.
-          if [ -n "$(git status --porcelain dist | grep -v '\.map$')" ]; then
+          if git status --porcelain dist | grep -qv '\.map$'; then
             echo "::error::dist runtime files differ from source — run 'npm run build' with Node 24 and commit the result."
             git diff --stat dist
             exit 1

@@ -51,6 +51,14 @@
       "assetTemplate": "kotlin-compiler-{version}.zip",
       "sha256": "eb7b68e01029fa67bc8d060ee54c12018f2c60ddc438cf21db14517229aa693b"
     },
+    "opengrep": {
+      "provider": "github",
+      "repository": "opengrep/opengrep",
+      "version": "1.26.0",
+      "tagTemplate": "v{version}",
+      "assetTemplate": "opengrep_manylinux_x86",
+      "sha256": "40c21299eeddabf743b856daa843d24f9d4a027130671cd45b3b21776fd9ab26"
+    },
     "semgrep": {
       "provider": "pypi",
       "package": "semgrep",
