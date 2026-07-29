@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
@@ -84,15 +84,29 @@ function extractVersion(template, value) {
   return value.slice(prefix.length, value.length - suffix.length || undefined);
 }
 
-function checksumFromText(text, assetName) {
-  const escapedName = assetName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const common = new RegExp(`^([a-fA-F0-9]{64})\\s+\\*?${escapedName}$`, "m").exec(text);
+export function checksumFromText(text, assetName) {
+  const escapedName = assetName.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+  const common = new RegExp(
+    String.raw`^([a-fA-F0-9]{64})\s+\*?${escapedName}$`,
+    "m",
+  ).exec(text);
   if (common) return common[1].toLowerCase();
   const bsd = new RegExp(
-    `^SHA256\\s*\\(${escapedName}\\)\\s*=\\s*([a-fA-F0-9]{64})$`,
+    String.raw`^SHA256\s*\(${escapedName}\)\s*=\s*([a-fA-F0-9]{64})$`,
     "mi",
   ).exec(text);
   return bsd?.[1]?.toLowerCase();
+}
+
+export function xmlElementText(xml, element) {
+  const openingTag = `<${element}>`;
+  const closingTag = `</${element}>`;
+  const contentStart = xml.indexOf(openingTag);
+  if (contentStart < 0) return undefined;
+  const valueStart = contentStart + openingTag.length;
+  const contentEnd = xml.indexOf(closingTag, valueStart);
+  if (contentEnd < 0) return undefined;
+  return xml.slice(valueStart, contentEnd).trim() || undefined;
 }
 
 async function githubRelease(tool, version) {
@@ -142,7 +156,7 @@ async function latestVersion(tool) {
       const metadataUrl =
         `https://repo1.maven.org/maven2/${groupPath}/${tool.artifact}/maven-metadata.xml`;
       const metadata = await fetchResponse(metadataUrl).then((response) => response.text());
-      const release = /<release>\s*([^<]+)\s*<\/release>/.exec(metadata)?.[1];
+      const release = xmlElementText(metadata, "release");
       if (!release) throw new Error(`Maven metadata has no release version for ${tool.artifact}`);
       return release;
     }
@@ -151,71 +165,82 @@ async function latestVersion(tool) {
   }
 }
 
+async function resolveGithubUpdate(tool, version) {
+  const release = await githubRelease(tool, version);
+  const assetName = githubAssetName(tool, version);
+  const { asset, sha256 } = await githubAssetDigest(release, assetName);
+  const downloaded = await digestResponse(
+    await fetchResponse(asset.browser_download_url),
+    ["sha256"],
+  );
+  if (downloaded.sha256 !== sha256) {
+    throw new Error(
+      `downloaded SHA-256 ${downloaded.sha256} does not match release digest ${sha256}`,
+    );
+  }
+  return { version, sha256 };
+}
+
+async function resolvePypiUpdate(tool, version) {
+  const metadata = await fetchJson(
+    `https://pypi.org/pypi/${tool.package}/${encodeURIComponent(version)}/json`,
+  );
+  if (metadata.info.version !== version) throw new Error(`PyPI returned ${metadata.info.version}`);
+  if (!metadata.urls?.some((file) => !file.yanked)) {
+    throw new Error(`PyPI release ${tool.package}@${version} has no active distributions`);
+  }
+  return { version };
+}
+
+async function resolveNpmUpdate(tool, version) {
+  const metadata = await fetchJson(
+    `https://registry.npmjs.org/${tool.package}/${encodeURIComponent(version)}`,
+  );
+  if (metadata.version !== version) throw new Error(`npm returned ${metadata.version}`);
+  if (!metadata.dist?.integrity) {
+    throw new Error(`npm release ${tool.package}@${version} has no integrity digest`);
+  }
+  return { version };
+}
+
+async function resolveMavenUpdate(tool, version) {
+  const artifactUrl = mavenBaseUrl(tool, version);
+  const sha256Response = await fetchOptionalResponse(`${artifactUrl}.sha256`);
+  if (sha256Response) {
+    const checksumText = await sha256Response.text();
+    const sha256 = /^[a-fA-F0-9]{64}/.exec(checksumText.trim())?.[0]?.toLowerCase();
+    if (!sha256) throw new Error(`Maven artifact has no valid SHA-256 checksum`);
+    const downloaded = await digestResponse(await fetchResponse(artifactUrl), ["sha256"]);
+    if (downloaded.sha256 !== sha256) {
+      throw new Error(
+        `downloaded SHA-256 ${downloaded.sha256} does not match Maven digest ${sha256}`,
+      );
+    }
+    return { version, sha256 };
+  }
+
+  const checksumResponse = await fetchResponse(`${artifactUrl}.sha1`);
+  const checksumText = await checksumResponse.text();
+  const sha1 = /^[a-fA-F0-9]{40}/.exec(checksumText.trim())?.[0]?.toLowerCase();
+  if (!sha1) throw new Error(`Maven artifact has no valid SHA-1 checksum`);
+  const downloaded = await digestResponse(await fetchResponse(artifactUrl), ["sha1", "sha256"]);
+  if (downloaded.sha1 !== sha1) {
+    throw new Error(`downloaded SHA-1 ${downloaded.sha1} does not match Maven digest ${sha1}`);
+  }
+  console.warn("Maven SHA-256 unavailable; artifact verified with repository SHA-1");
+  return { version, sha256: downloaded.sha256 };
+}
+
 async function resolveUpdate(tool, version) {
   switch (tool.provider) {
-    case "github": {
-      const release = await githubRelease(tool, version);
-      const assetName = githubAssetName(tool, version);
-      const { asset, sha256 } = await githubAssetDigest(release, assetName);
-      const downloaded = await digestResponse(
-        await fetchResponse(asset.browser_download_url),
-        ["sha256"],
-      );
-      if (downloaded.sha256 !== sha256) {
-        throw new Error(
-          `downloaded SHA-256 ${downloaded.sha256} does not match release digest ${sha256}`,
-        );
-      }
-      return { version, sha256 };
-    }
-    case "pypi": {
-      const metadata = await fetchJson(
-        `https://pypi.org/pypi/${tool.package}/${encodeURIComponent(version)}/json`,
-      );
-      if (metadata.info.version !== version) throw new Error(`PyPI returned ${metadata.info.version}`);
-      if (!metadata.urls?.some((file) => !file.yanked)) {
-        throw new Error(`PyPI release ${tool.package}@${version} has no active distributions`);
-      }
-      return { version };
-    }
-    case "npm": {
-      const metadata = await fetchJson(
-        `https://registry.npmjs.org/${tool.package}/${encodeURIComponent(version)}`,
-      );
-      if (metadata.version !== version) throw new Error(`npm returned ${metadata.version}`);
-      if (!metadata.dist?.integrity) {
-        throw new Error(`npm release ${tool.package}@${version} has no integrity digest`);
-      }
-      return { version };
-    }
-    case "maven": {
-      const artifactUrl = mavenBaseUrl(tool, version);
-      const sha256Response = await fetchOptionalResponse(`${artifactUrl}.sha256`);
-      if (sha256Response) {
-        const checksumText = await sha256Response.text();
-        const sha256 = /^[a-fA-F0-9]{64}/.exec(checksumText.trim())?.[0]?.toLowerCase();
-        if (!sha256) throw new Error(`Maven artifact has no valid SHA-256 checksum`);
-        const downloaded = await digestResponse(await fetchResponse(artifactUrl), ["sha256"]);
-        if (downloaded.sha256 !== sha256) {
-          throw new Error(
-            `downloaded SHA-256 ${downloaded.sha256} does not match Maven digest ${sha256}`,
-          );
-        }
-        return { version, sha256 };
-      }
-
-      const checksumText = await fetchResponse(`${artifactUrl}.sha1`).then((response) =>
-        response.text(),
-      );
-      const sha1 = /^[a-fA-F0-9]{40}/.exec(checksumText.trim())?.[0]?.toLowerCase();
-      if (!sha1) throw new Error(`Maven artifact has no valid SHA-1 checksum`);
-      const downloaded = await digestResponse(await fetchResponse(artifactUrl), ["sha1", "sha256"]);
-      if (downloaded.sha1 !== sha1) {
-        throw new Error(`downloaded SHA-1 ${downloaded.sha1} does not match Maven digest ${sha1}`);
-      }
-      console.warn("Maven SHA-256 unavailable; artifact verified with repository SHA-1");
-      return { version, sha256: downloaded.sha256 };
-    }
+    case "github":
+      return resolveGithubUpdate(tool, version);
+    case "pypi":
+      return resolvePypiUpdate(tool, version);
+    case "npm":
+      return resolveNpmUpdate(tool, version);
+    case "maven":
+      return resolveMavenUpdate(tool, version);
     default:
       throw new Error(`unsupported provider ${tool.provider}`);
   }
@@ -269,12 +294,20 @@ async function checkTools(lock, names) {
 }
 
 function runVerification() {
+  const npmCli = process.env.npm_execpath;
+  if (!npmCli || !isAbsolute(npmCli)) {
+    throw new Error("npm_execpath must be an absolute path; run the updater through npm");
+  }
   for (const args of [
     ["run", "typecheck"],
     ["test"],
     ["run", "build"],
   ]) {
-    const result = spawnSync("npm", args, { cwd: repositoryRoot, stdio: "inherit" });
+    const result = spawnSync(process.execPath, [npmCli, ...args], {
+      cwd: repositoryRoot,
+      stdio: "inherit",
+    });
+    if (result.error) throw result.error;
     if (result.status !== 0) throw new Error(`npm ${args.join(" ")} failed`);
   }
 }
@@ -333,7 +366,11 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(`engine-tools: ${error instanceof Error ? error.message : String(error)}`);
-  process.exitCode = 1;
-});
+if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
+  try {
+    await main();
+  } catch (error) {
+    console.error(`engine-tools: ${error instanceof Error ? error.message : String(error)}`);
+    process.exitCode = 1;
+  }
+}
