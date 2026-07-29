@@ -16,6 +16,7 @@ const EXPECTED_TOOLS = [
   "gitleaks",
   "gosec",
   "kotlin",
+  "opengrep",
   "semgrep",
   "spotbugs",
   "trivy",
@@ -36,6 +37,7 @@ test("downloaded binary tools have pinned SHA-256 digests", () => {
     "gitleaks",
     "gosec",
     "kotlin",
+    "opengrep",
     "spotbugs",
     "trivy",
   ] as const) {
@@ -44,6 +46,10 @@ test("downloaded binary tools have pinned SHA-256 digests", () => {
 });
 
 test("tool metadata expands to the existing download URLs", () => {
+  assert.equal(
+    githubReleaseUrl(TOOLS.opengrep),
+    "https://github.com/opengrep/opengrep/releases/download/v1.26.0/opengrep_manylinux_x86",
+  );
   assert.equal(
     githubReleaseUrl(TOOLS.trivy),
     "https://github.com/aquasecurity/trivy/releases/download/v0.72.0/trivy_0.72.0_Linux-64bit.tar.gz",

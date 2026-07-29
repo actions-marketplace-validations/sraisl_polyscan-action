@@ -66,6 +66,21 @@ export function resolveExecutable(
   return null;
 }
 
+export async function resolvePinnedExecutable(
+  tool: string,
+  expectedVersion: string,
+  versionArgs: string[] = ["--version"],
+  searchPath: string = process.env.PATH ?? "",
+): Promise<string | null> {
+  const executable = resolveExecutable(tool, searchPath);
+  if (!executable) return null;
+
+  const result = await run(executable, versionArgs);
+  if (result.exitCode !== 0) return null;
+  const match = /^v?(\d+(?:\.\d+)+)(?:\s|$)/.exec(result.stdout.trim());
+  return match?.[1] === expectedVersion ? executable : null;
+}
+
 // Check whether a binary is available to direct child processes.
 export async function which(tool: string): Promise<boolean> {
   return resolveExecutable(tool) !== null;

@@ -1,48 +1,19 @@
 // Semgrep engine adapter — installs via pip if missing, runs with auto config.
 import * as core from "@actions/core";
-import { Finding, EngineResult, Severity } from "../schema";
+import { Finding, EngineResult } from "../schema";
 import { run, ensurePythonTool } from "../exec";
 import { resolveTarget } from "../target";
 import { TOOLS } from "../tool-versions";
+import { parseSemgrepCompatibleJson } from "./semgrep-json";
 
 const SEMGREP_VERSION = TOOLS.semgrep.version;
-
-function mapSeverity(s: string): Severity {
-  switch ((s || "").toUpperCase()) {
-    case "ERROR":
-      return "high";
-    case "WARNING":
-      return "medium";
-    case "INFO":
-      return "low";
-    default:
-      return "medium";
-  }
-}
 
 async function ensureInstalled() {
   return ensurePythonTool("semgrep", SEMGREP_VERSION, "semgrep", core);
 }
 
 export function parseSemgrepJson(stdout: string): Finding[] {
-  const findings: Finding[] = [];
-  const data = JSON.parse(stdout);
-  for (const r of data.results ?? []) {
-    const meta = r.extra?.metadata ?? {};
-    const cweRaw = meta.cwe;
-    const cwe = Array.isArray(cweRaw) ? cweRaw[0] : cweRaw;
-    findings.push({
-      engine: "semgrep",
-      ruleId: String(r.check_id ?? "semgrep-rule").split(".").pop() || "semgrep-rule",
-      severity: mapSeverity(r.extra?.severity),
-      message: r.extra?.message?.trim() || "Semgrep finding",
-      file: r.path,
-      line: r.start?.line ?? 0,
-      column: r.start?.col,
-      cwe: cwe ? /CWE-\d+/.exec(String(cwe))?.[0] : undefined,
-    });
-  }
-  return findings;
+  return parseSemgrepCompatibleJson(stdout, "semgrep", "semgrep-rule", "Semgrep finding");
 }
 
 export async function runSemgrep(target: string): Promise<EngineResult> {

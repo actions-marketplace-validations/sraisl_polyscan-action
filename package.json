@@ -21,6 +21,7 @@
     "sast",
     "security",
     "semgrep",
+    "opengrep",
     "bandit",
     "eslint",
     "gosec",

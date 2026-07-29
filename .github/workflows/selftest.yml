@@ -28,11 +28,14 @@ jobs:
           upload-artifacts: "true"
 
       - name: Assert findings were produced
+        env:
+          TOTAL: ${{ steps.scan.outputs.total }}
+          HIGH: ${{ steps.scan.outputs.high }}
         run: |
-          echo "total=${{ steps.scan.outputs.total }}"
-          echo "high=${{ steps.scan.outputs.high }}"
-          if [ "${{ steps.scan.outputs.total }}" -lt "5" ]; then
-            echo "::error::expected >=5 findings, got ${{ steps.scan.outputs.total }}"
+          echo "total=$TOTAL"
+          echo "high=$HIGH"
+          if ! [[ "$TOTAL" =~ ^[0-9]+$ ]] || (( TOTAL < 5 )); then
+            echo "::error::expected >=5 findings, got $TOTAL"
             exit 1
           fi
 
@@ -62,3 +65,63 @@ jobs:
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: polyscan.sarif
+
+  opengrep-selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Mask host Python
+        run: |
+          mkdir -p "$RUNNER_TEMP/no-python"
+          printf '#!/bin/sh\nexit 97\n' > "$RUNNER_TEMP/no-python/python"
+          cp "$RUNNER_TEMP/no-python/python" "$RUNNER_TEMP/no-python/python3"
+          chmod +x "$RUNNER_TEMP/no-python/python" "$RUNNER_TEMP/no-python/python3"
+          echo "$RUNNER_TEMP/no-python" >> "$GITHUB_PATH"
+
+      - name: Run OpenGrep without Python
+        id: scan
+        uses: ./
+        with:
+          target: "test-fixtures"
+          engines: "opengrep"
+          opengrep-config: "test-fixtures/opengrep-rules.yml"
+          gate: "false"
+          sarif: "true"
+          sbom: "false"
+          upload-artifacts: "false"
+          output-dir: ".polyscan-opengrep"
+
+      - name: Assert OpenGrep findings
+        env:
+          TOTAL: ${{ steps.scan.outputs.total }}
+          FAILED_ENGINES: ${{ steps.scan.outputs.failed-engines }}
+        run: |
+          node - <<'NODE'
+          const fs = require("node:fs");
+
+          if (Number(process.env.TOTAL) < 1) {
+            throw new Error(`expected at least one OpenGrep finding, got ${process.env.TOTAL}`);
+          }
+          if (process.env.FAILED_ENGINES) {
+            throw new Error(`OpenGrep failed: ${process.env.FAILED_ENGINES}`);
+          }
+
+          const sarif = JSON.parse(
+            fs.readFileSync(".polyscan-opengrep/polyscan.sarif", "utf8"),
+          );
+          const findings = sarif.runs.flatMap((run) => run.results ?? []);
+          const finding = findings.find(
+            (result) =>
+              result.ruleId === "opengrep/polyscan-test-eval" &&
+              result.properties?.engine === "opengrep",
+          );
+          if (!finding) {
+            throw new Error("expected deterministic OpenGrep eval finding");
+          }
+
+          const uri = finding.locations?.[0]?.physicalLocation?.artifactLocation?.uri;
+          if (!uri?.startsWith("test-fixtures/") || uri.startsWith("/")) {
+            throw new Error(`invalid OpenGrep SARIF path: ${uri}`);
+          }
+          NODE

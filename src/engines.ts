@@ -1,4 +1,4 @@
-export const ALL_ENGINES = [
+export const DEFAULT_ENGINES = [
   "semgrep",
   "bandit",
   "eslint",
@@ -9,12 +9,24 @@ export const ALL_ENGINES = [
   "gosec",
 ] as const;
 
-export type EngineName = (typeof ALL_ENGINES)[number];
+export const SUPPORTED_ENGINES = [
+  "semgrep",
+  "opengrep",
+  "bandit",
+  "eslint",
+  "spotbugs",
+  "trivy",
+  "detekt",
+  "gitleaks",
+  "gosec",
+] as const;
+
+export type EngineName = (typeof SUPPORTED_ENGINES)[number];
 
 export function resolveEngines(input: string): string[] {
   const raw = input.trim();
   if (raw === "" || raw.toLowerCase() === "all") {
-    return [...ALL_ENGINES];
+    return [...DEFAULT_ENGINES];
   }
   return raw
     .split(",")
@@ -23,5 +35,5 @@ export function resolveEngines(input: string): string[] {
 }
 
 export function unknownEngines(engines: string[]): string[] {
-  return engines.filter((e) => !(ALL_ENGINES as readonly string[]).includes(e));
+  return engines.filter((e) => !(SUPPORTED_ENGINES as readonly string[]).includes(e));
 }
