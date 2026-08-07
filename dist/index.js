@@ -87575,6 +87575,7 @@ exports.DEFAULT_ENGINES = [
     "detekt",
     "gitleaks",
     "gosec",
+    "hadolint",
 ];
 exports.SUPPORTED_ENGINES = [
     "semgrep",
@@ -87586,6 +87587,7 @@ exports.SUPPORTED_ENGINES = [
     "detekt",
     "gitleaks",
     "gosec",
+    "hadolint",
 ];
 function resolveEngines(input) {
     const raw = input.trim();
@@ -88389,6 +88391,164 @@ async function runGosec(target) {
     return failures.length > 0
         ? { engine: "gosec", findings, status: "failed", note: failures.join("; ").slice(0, 300) }
         : { engine: "gosec", findings, status: "success" };
+}
+
+
+/***/ }),
+
+/***/ 10544:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.findDockerfiles = findDockerfiles;
+exports.parseHadolintSarif = parseHadolintSarif;
+exports.runHadolint = runHadolint;
+// hadolint engine adapter — Dockerfile linting (best practices + security-relevant checks).
+// Downloads the pinned standalone binary and parses hadolint's native SARIF output.
+const core = __importStar(__nccwpck_require__(37484));
+const fs = __importStar(__nccwpck_require__(73024));
+const path = __importStar(__nccwpck_require__(76760));
+const exec_1 = __nccwpck_require__(73190);
+const target_1 = __nccwpck_require__(76746);
+const tools_1 = __nccwpck_require__(51732);
+const tool_versions_1 = __nccwpck_require__(88947);
+const HADOLINT = tool_versions_1.TOOLS.hadolint;
+const IGNORED_DIRECTORIES = new Set([".git", "node_modules", "vendor", "build", "dist", "target", ".gradle"]);
+function isDockerfile(name) {
+    const lower = name.toLowerCase();
+    return lower === "dockerfile" || lower.startsWith("dockerfile.") || lower.endsWith(".dockerfile");
+}
+function findDockerfiles(root) {
+    const files = [];
+    function walk(directory) {
+        for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+            if (entry.isDirectory()) {
+                if (!IGNORED_DIRECTORIES.has(entry.name))
+                    walk(path.join(directory, entry.name));
+            }
+            else if (entry.isFile() && isDockerfile(entry.name)) {
+                files.push(path.join(directory, entry.name));
+            }
+        }
+    }
+    walk(root);
+    return files;
+}
+// hadolint SARIF only emits error/warning/note (info+style are packed into note); map to our severities.
+function mapSeverity(level) {
+    switch ((level || "").toLowerCase()) {
+        case "error":
+            return "high";
+        case "warning":
+            return "medium";
+        default:
+            return "low";
+    }
+}
+function parseHadolintSarif(sarif, abs) {
+    const findings = [];
+    for (const runObj of sarif.runs ?? []) {
+        for (const r of runObj.results ?? []) {
+            const result = r;
+            const ruleId = result.ruleId ?? "hadolint";
+            const loc = result.locations?.[0]?.physicalLocation;
+            const uri = loc?.artifactLocation?.uri ?? "unknown";
+            findings.push({
+                engine: "hadolint",
+                ruleId,
+                severity: mapSeverity(result.level ?? ""),
+                message: result.message?.text ?? ruleId,
+                file: uri.replace(/^file:\/\//, "").replace(abs + "/", ""),
+                line: loc?.region?.startLine ?? 0,
+                column: loc?.region?.startColumn,
+            });
+        }
+    }
+    return findings;
+}
+async function ensureHadolint() {
+    if (await (0, exec_1.which)("hadolint"))
+        return "hadolint";
+    core.info(`hadolint not found — downloading v${HADOLINT.version}…`);
+    try {
+        return await (0, tools_1.cachedTool)("hadolint", HADOLINT.version, "hadolint", async (directory) => {
+            const downloaded = await (0, tools_1.downloadVerified)((0, tool_versions_1.githubReleaseUrl)(HADOLINT), HADOLINT.sha256);
+            const executable = path.join(directory, "hadolint");
+            fs.copyFileSync(downloaded, executable);
+            fs.chmodSync(executable, 0o700);
+        });
+    }
+    catch (err) {
+        core.warning(`hadolint download failed: ${String(err).slice(0, 200)}`);
+        return null;
+    }
+}
+async function runHadolint(target) {
+    const abs = (0, target_1.resolveTarget)(target);
+    const dockerfiles = findDockerfiles(abs);
+    if (dockerfiles.length === 0) {
+        return { engine: "hadolint", findings: [], status: "skipped", note: "no Dockerfiles found" };
+    }
+    const bin = await ensureHadolint();
+    if (!bin) {
+        return { engine: "hadolint", findings: [], status: "failed", note: "hadolint not installed" };
+    }
+    const result = await (0, exec_1.run)(bin, ["--no-fail", "--format", "sarif", ...dockerfiles]);
+    if (!result.stdout.trim()) {
+        return {
+            engine: "hadolint",
+            findings: [],
+            status: "failed",
+            note: result.stderr.slice(0, 200) || "hadolint produced no output",
+        };
+    }
+    try {
+        const sarif = JSON.parse(result.stdout);
+        return { engine: "hadolint", findings: parseHadolintSarif(sarif, abs), status: "success" };
+    }
+    catch (err) {
+        return {
+            engine: "hadolint",
+            findings: [],
+            status: "failed",
+            note: `parse error: ${String(err).slice(0, 200)}`,
+        };
+    }
 }
 
 
@@ -89418,6 +89578,7 @@ const trivy_1 = __nccwpck_require__(10139);
 const detekt_1 = __nccwpck_require__(19308);
 const gitleaks_1 = __nccwpck_require__(56363);
 const gosec_1 = __nccwpck_require__(7668);
+const hadolint_1 = __nccwpck_require__(10544);
 const gate_1 = __nccwpck_require__(81956);
 const sarif_1 = __nccwpck_require__(20866);
 const sbom_1 = __nccwpck_require__(20594);
@@ -89487,6 +89648,8 @@ async function runEngine(name, target, trivyImage, opengrepConfig) {
                 return await (0, gitleaks_1.runGitleaks)(target);
             case "gosec":
                 return await (0, gosec_1.runGosec)(target);
+            case "hadolint":
+                return await (0, hadolint_1.runHadolint)(target);
             default:
                 return { engine: name, findings: [], status: "failed", note: "unknown engine" };
         }
@@ -146917,7 +147080,7 @@ module.exports = /*#__PURE__*/JSON.parse('{"name":"polyscan-action","version":"1
 /***/ ((module) => {
 
 "use strict";
-module.exports = /*#__PURE__*/JSON.parse('{"schemaVersion":1,"tools":{"bandit":{"provider":"pypi","package":"bandit","version":"1.9.4"},"detekt":{"provider":"github","repository":"detekt/detekt","version":"1.23.7","tagTemplate":"v{version}","assetTemplate":"detekt-cli-{version}-all.jar","sha256":"84beded283012cb2b38bcaef4996452fcd6069d2e9ca74b50eaa79e0ad21897e"},"eslint":{"provider":"npm","package":"eslint","version":"8.57.1"},"findsecbugs":{"provider":"maven","group":"com.h3xstream.findsecbugs","artifact":"findsecbugs-plugin","extension":"jar","version":"1.13.0","sha256":"c239763a8c327b5fb653a34dece6398578bf435b9a32c212bb8e1abe701368a5"},"gitleaks":{"provider":"github","repository":"gitleaks/gitleaks","version":"8.21.0","tagTemplate":"v{version}","assetTemplate":"gitleaks_{version}_linux_x64.tar.gz","sha256":"6c3a240509647225997d31df06e872350e1c0fe2fb85d323ae29a9fef0012586"},"gosec":{"provider":"github","repository":"securego/gosec","version":"2.28.0","tagTemplate":"v{version}","assetTemplate":"gosec_{version}_linux_amd64.tar.gz","sha256":"d7882e505b1ff345d458bf0e893eec8019bc849f861ad73a212869540dd505ff"},"kotlin":{"provider":"github","repository":"JetBrains/kotlin","version":"1.9.24","tagTemplate":"v{version}","assetTemplate":"kotlin-compiler-{version}.zip","sha256":"eb7b68e01029fa67bc8d060ee54c12018f2c60ddc438cf21db14517229aa693b"},"opengrep":{"provider":"github","repository":"opengrep/opengrep","version":"1.26.0","tagTemplate":"v{version}","assetTemplate":"opengrep_manylinux_x86","sha256":"40c21299eeddabf743b856daa843d24f9d4a027130671cd45b3b21776fd9ab26"},"semgrep":{"provider":"pypi","package":"semgrep","version":"1.170.0"},"spotbugs":{"provider":"github","repository":"spotbugs/spotbugs","version":"4.9.8","tagTemplate":"{version}","assetTemplate":"spotbugs-{version}.tgz","sha256":"2eb8e0f2b223c22ffa2ce0c1cf1be4127dde19d240b8f7ce69a5fd3ad5c36ff3"},"trivy":{"provider":"github","repository":"aquasecurity/trivy","version":"0.72.0","tagTemplate":"v{version}","assetTemplate":"trivy_{version}_Linux-64bit.tar.gz","sha256":"bbb64b9695866ce4a7a8f5c9592002c5961cab378577fa3f8a040df362b9b2ea"}}}');
+module.exports = /*#__PURE__*/JSON.parse('{"schemaVersion":1,"tools":{"bandit":{"provider":"pypi","package":"bandit","version":"1.9.4"},"detekt":{"provider":"github","repository":"detekt/detekt","version":"1.23.7","tagTemplate":"v{version}","assetTemplate":"detekt-cli-{version}-all.jar","sha256":"84beded283012cb2b38bcaef4996452fcd6069d2e9ca74b50eaa79e0ad21897e"},"eslint":{"provider":"npm","package":"eslint","version":"8.57.1"},"findsecbugs":{"provider":"maven","group":"com.h3xstream.findsecbugs","artifact":"findsecbugs-plugin","extension":"jar","version":"1.13.0","sha256":"c239763a8c327b5fb653a34dece6398578bf435b9a32c212bb8e1abe701368a5"},"gitleaks":{"provider":"github","repository":"gitleaks/gitleaks","version":"8.21.0","tagTemplate":"v{version}","assetTemplate":"gitleaks_{version}_linux_x64.tar.gz","sha256":"6c3a240509647225997d31df06e872350e1c0fe2fb85d323ae29a9fef0012586"},"gosec":{"provider":"github","repository":"securego/gosec","version":"2.28.0","tagTemplate":"v{version}","assetTemplate":"gosec_{version}_linux_amd64.tar.gz","sha256":"d7882e505b1ff345d458bf0e893eec8019bc849f861ad73a212869540dd505ff"},"hadolint":{"provider":"github","repository":"hadolint/hadolint","version":"2.15.1","tagTemplate":"v{version}","assetTemplate":"hadolint-linux-x86_64","sha256":"c7187db94eeeeca956519a6af171adc31453941a1e777961f6e680f697c8c507"},"kotlin":{"provider":"github","repository":"JetBrains/kotlin","version":"1.9.24","tagTemplate":"v{version}","assetTemplate":"kotlin-compiler-{version}.zip","sha256":"eb7b68e01029fa67bc8d060ee54c12018f2c60ddc438cf21db14517229aa693b"},"opengrep":{"provider":"github","repository":"opengrep/opengrep","version":"1.26.0","tagTemplate":"v{version}","assetTemplate":"opengrep_manylinux_x86","sha256":"40c21299eeddabf743b856daa843d24f9d4a027130671cd45b3b21776fd9ab26"},"semgrep":{"provider":"pypi","package":"semgrep","version":"1.170.0"},"spotbugs":{"provider":"github","repository":"spotbugs/spotbugs","version":"4.9.8","tagTemplate":"{version}","assetTemplate":"spotbugs-{version}.tgz","sha256":"2eb8e0f2b223c22ffa2ce0c1cf1be4127dde19d240b8f7ce69a5fd3ad5c36ff3"},"trivy":{"provider":"github","repository":"aquasecurity/trivy","version":"0.72.0","tagTemplate":"v{version}","assetTemplate":"trivy_{version}_Linux-64bit.tar.gz","sha256":"bbb64b9695866ce4a7a8f5c9592002c5961cab378577fa3f8a040df362b9b2ea"}}}');
 
 /***/ })
 

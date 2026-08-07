@@ -43,6 +43,14 @@
       "assetTemplate": "gosec_{version}_linux_amd64.tar.gz",
       "sha256": "d7882e505b1ff345d458bf0e893eec8019bc849f861ad73a212869540dd505ff"
     },
+    "hadolint": {
+      "provider": "github",
+      "repository": "hadolint/hadolint",
+      "version": "2.15.1",
+      "tagTemplate": "v{version}",
+      "assetTemplate": "hadolint-linux-x86_64",
+      "sha256": "c7187db94eeeeca956519a6af171adc31453941a1e777961f6e680f697c8c507"
+    },
     "kotlin": {
       "provider": "github",
       "repository": "JetBrains/kotlin",
