@@ -7,6 +7,7 @@ export const DEFAULT_ENGINES = [
   "detekt",
   "gitleaks",
   "gosec",
+  "hadolint",
 ] as const;
 
 export const SUPPORTED_ENGINES = [
@@ -19,6 +20,7 @@ export const SUPPORTED_ENGINES = [
   "detekt",
   "gitleaks",
   "gosec",
+  "hadolint",
 ] as const;
 
 export type EngineName = (typeof SUPPORTED_ENGINES)[number];

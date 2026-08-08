@@ -14,6 +14,7 @@ import { runTrivy } from "./engines/trivy";
 import { runDetekt } from "./engines/detekt";
 import { runGitleaks } from "./engines/gitleaks";
 import { runGosec } from "./engines/gosec";
+import { runHadolint } from "./engines/hadolint";
 import { evaluateGate } from "./gate";
 import { toSarif } from "./sarif";
 import { toSbom } from "./sbom";
@@ -118,6 +119,8 @@ async function runEngine(
         return await runGitleaks(target);
       case "gosec":
         return await runGosec(target);
+      case "hadolint":
+        return await runHadolint(target);
       default:
         return { engine: name, findings: [], status: "failed", note: "unknown engine" };
     }

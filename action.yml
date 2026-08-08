@@ -11,7 +11,7 @@ inputs:
     required: false
     default: "."
   engines:
-    description: "Comma-separated engines to run, or 'all': semgrep,opengrep,bandit,eslint,spotbugs,trivy,detekt,gitleaks,gosec (all excludes opt-in opengrep)"
+    description: "Comma-separated engines to run, or 'all': semgrep,opengrep,bandit,eslint,spotbugs,trivy,detekt,gitleaks,gosec,hadolint (all excludes opt-in opengrep)"
     required: false
     default: "all"
   opengrep-config:
@@ -19,7 +19,7 @@ inputs:
     required: false
     default: "auto"
   max-concurrency:
-    description: "Maximum number of read-only engines to run concurrently (1-9); SpotBugs always runs as a serial barrier"
+    description: "Maximum number of read-only engines to run concurrently (1-10); SpotBugs always runs as a serial barrier"
     required: false
     default: "2"
   max-critical:

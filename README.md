@@ -1,6 +1,6 @@
 # PolyScan Action
 
-**Multi-language SAST as a native GitHub Action.** One step runs all configured security engines — Semgrep, OpenGrep, Bandit, ESLint, SpotBugs, detekt, gosec, Trivy and gitleaks — normalizes every result into a single schema, enforces a configurable **Quality Gate**, and emits **SARIF**, a **CycloneDX SBOM** and a rich **job summary** — plus optional artifact upload.
+**Multi-language SAST as a native GitHub Action.** One step runs all configured security engines — Semgrep, OpenGrep, Bandit, ESLint, SpotBugs, detekt, gosec, Trivy, gitleaks and hadolint — normalizes every result into a single schema, enforces a configurable **Quality Gate**, and emits **SARIF**, a **CycloneDX SBOM** and a rich **job summary** — plus optional artifact upload.
 
 Written in TypeScript, bundled with `@vercel/ncc`, runs as a native GitHub Action on the `node24` runtime. PolyScan supports Linux x64 runners.
 
@@ -45,9 +45,9 @@ jobs:
 | Input | Default | Description |
 |---|---|---|
 | `target` | `.` | Workspace-contained directory to scan |
-| `engines` | `all` | `all` or comma-separated engines: `semgrep,opengrep,bandit,eslint,spotbugs,trivy,detekt,gitleaks,gosec`. OpenGrep is opt-in and is not included by `all`. |
+| `engines` | `all` | `all` or comma-separated engines: `semgrep,opengrep,bandit,eslint,spotbugs,trivy,detekt,gitleaks,gosec,hadolint`. OpenGrep is opt-in and is not included by `all`. |
 | `opengrep-config` | `auto` | OpenGrep rules config: `auto`, a local path, URL, or registry ID |
-| `max-concurrency` | `2` | Maximum concurrent read-only engines (`1`-`9`); SpotBugs runs as a serial barrier |
+| `max-concurrency` | `2` | Maximum concurrent read-only engines (`1`-`10`); SpotBugs runs as a serial barrier |
 | `max-critical` | `0` | Max critical findings before the gate fails |
 | `max-high` | `0` | Max high findings before the gate fails |
 | `max-medium` | `50` | Max medium findings before the gate fails |
@@ -85,10 +85,11 @@ jobs:
 | **detekt** | Kotlin | Kotlin-native static analysis (incl. security rules) via detekt CLI; SARIF parsed |
 | **gitleaks** | git history + working tree | Secret / credential detection (API keys, tokens, passwords) via gitleaks CLI; SARIF parsed |
 | **gosec** | Go | Go-native security analysis; scans each detected Go module and preserves native severity and CWE data from SARIF |
+| **hadolint** | Dockerfiles | Dockerfile linter (incl. embedded shell via ShellCheck); standalone Linux x64 binary; SARIF parsed natively |
 
 Python engines are installed into isolated, version-pinned environments. OpenGrep does not require Python: PolyScan uses the exact pinned executable from `PATH` when available, otherwise it downloads and caches a SHA-256-verified standalone binary. Other downloaded tools are also cached and verified with SHA-256. SpotBugs is **build-aware** — for real Java/Kotlin projects it invokes the project's own build (Maven/Gradle) so the full dependency classpath is available, which is required to detect data-flow bugs (SQLi, command injection) on **Java** (FindSecBugs does not target Kotlin bytecode). For **Kotlin** code-security use **detekt**, which analyzes Kotlin source natively. gosec is downloaded only when Go files are present and requires the Go toolchain available on the runner. Trivy runs `--offline-scan` to avoid Maven Central rate limits.
 
-**Default: the original eight engines run** (`engines: "all"` expands to `semgrep,bandit,eslint,spotbugs,trivy,detekt,gitleaks,gosec`). OpenGrep is an explicit alternative and can be selected with `engines: "opengrep"` or combined with other engines. This preserves existing scan duration and finding behavior for current users.
+**Default: `engines: "all"` expands to** `semgrep,bandit,eslint,spotbugs,trivy,detekt,gitleaks,gosec,hadolint`. Each language-specific engine (gosec, detekt, hadolint, …) runs a quick file-presence check and is skipped with no findings and no download when its file type isn't present, so `all` stays cheap on repositories that don't use that language. OpenGrep is an explicit alternative and can be selected with `engines: "opengrep"` or combined with other engines.
 
 `opengrep-config: "auto"` loads OpenGrep's automatic rules configuration and can require network access. Use a repository-local rule file, for example `opengrep-config: ".opengrep/rules.yml"`, for deterministic and offline-friendly scans.
 

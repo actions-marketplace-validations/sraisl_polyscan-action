@@ -15,6 +15,7 @@ const EXPECTED_TOOLS = [
   "findsecbugs",
   "gitleaks",
   "gosec",
+  "hadolint",
   "kotlin",
   "opengrep",
   "semgrep",
@@ -36,6 +37,7 @@ test("downloaded binary tools have pinned SHA-256 digests", () => {
     "findsecbugs",
     "gitleaks",
     "gosec",
+    "hadolint",
     "kotlin",
     "opengrep",
     "spotbugs",
@@ -61,6 +63,10 @@ test("tool metadata expands to the existing download URLs", () => {
   assert.equal(
     githubReleaseUrl(TOOLS.gosec),
     "https://github.com/securego/gosec/releases/download/v2.28.0/gosec_2.28.0_linux_amd64.tar.gz",
+  );
+  assert.equal(
+    githubReleaseUrl(TOOLS.hadolint),
+    "https://github.com/hadolint/hadolint/releases/download/v2.15.1/hadolint-linux-x86_64",
   );
   assert.equal(
     mavenArtifactUrl(TOOLS.findsecbugs),
