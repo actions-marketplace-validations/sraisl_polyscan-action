@@ -1,6 +1,7 @@
 // Render a Markdown job summary for GitHub Actions.
 import { EngineResult, Finding, SeverityCounts } from "./schema";
 import { GateResult } from "./gate";
+import { EngineName } from "./engines";
 
 const SEV_EMOJI: Record<string, string> = {
   critical: "🟣",
@@ -19,6 +20,60 @@ function tableCell(value: string): string {
 
 function code(value: string): string {
   return `\`${tableCell(value).replaceAll("`", "'")}\``;
+}
+
+// Neutralizes markdown link/image syntax so untrusted, engine-sourced finding text
+// (e.g. a custom Semgrep rule's interpolated `message:`) can't render as a live
+// link or image in the job summary. Safe to use anywhere the text is NOT already
+// wrapped in a code span (code spans are never parsed as markdown by CommonMark).
+function textCell(value: string): string {
+  return tableCell(value).replaceAll("[", String.raw`\[`);
+}
+
+// Keyed by EngineName (not a bare string) so a typo in an engine key fails to
+// compile instead of silently never matching.
+// Only link when a canonical URL can be derived with confidence: a fixed
+// engine-doc naming convention. Engine-supplied advisory URLs (Trivy) and the
+// CWE fallback are handled separately in findingUrl().
+const ENGINE_RULE_URL: Partial<Record<EngineName, (ruleId: string) => string | undefined>> = {
+  hadolint: (ruleId) => {
+    if (/^DL\d+$/.test(ruleId)) return `https://github.com/hadolint/hadolint/wiki/${ruleId}`;
+    if (/^SC\d+$/.test(ruleId)) return `https://www.shellcheck.net/wiki/${ruleId}`;
+    return undefined;
+  },
+  gosec: (ruleId) => (/^G\d+$/.test(ruleId) ? `https://securego.io/docs/rules/${ruleId.toLowerCase()}.html` : undefined),
+  eslint: (ruleId) => (ruleId.includes("/") ? undefined : `https://eslint.org/docs/latest/rules/${ruleId}`),
+};
+
+// finding.url is engine-supplied (currently only Trivy's PrimaryURL) and not
+// type-enforced beyond "string" — reject anything that isn't a well-formed
+// http(s) URL rather than rendering it as a link destination.
+function isHttpUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function findingUrl(finding: Finding): string | undefined {
+  if (finding.url && isHttpUrl(finding.url)) return finding.url;
+
+  const specific = ENGINE_RULE_URL[finding.engine as EngineName]?.(finding.ruleId);
+  if (specific) return specific;
+
+  const cweMatch = finding.cwe ? /^CWE-(\d+)$/.exec(finding.cwe) : null;
+  return cweMatch ? `https://cwe.mitre.org/data/definitions/${cweMatch[1]}.html` : undefined;
+}
+
+function ruleCell(finding: Finding): string {
+  const label = code(finding.ruleId);
+  const url = findingUrl(finding);
+  // Angle-bracket the destination so a URL containing "(" or ")" (unlikely today,
+  // but not guaranteed for future engine-supplied PrimaryURL values) can't
+  // truncate the link.
+  return url ? `[${label}](<${url}>)` : label;
 }
 
 function severitySection(counts: SeverityCounts): string[] {
@@ -65,12 +120,12 @@ function secretsSection(findings: Finding[]): string[] {
   const lines = [
     "### 🔑 Secrets Detected (gitleaks)",
     "",
-    "| Rule | Location | Severity |",
-    "|---|---|---|",
+    "| Rule | Details | Location | Severity |",
+    "|---|---|---|---|",
   ];
   for (const finding of secrets) {
     lines.push(
-      `| ${code(finding.ruleId)} | ${code(findingLocation(finding))} | ` +
+      `| ${ruleCell(finding)} | ${textCell(finding.message)} | ${code(findingLocation(finding))} | ` +
         `${SEV_EMOJI[finding.severity]} ${finding.severity} |`,
     );
   }
@@ -97,7 +152,7 @@ function imageSection(findings: Finding[]): string[] {
     const cwe = finding.cwe ? ` (${finding.cwe})` : "";
     lines.push(
       `| ${SEV_EMOJI[finding.severity]} ${finding.severity} | ` +
-        `${code(finding.ruleId)}${cwe} | ${tableCell(finding.message)} | ` +
+        `${ruleCell(finding)}${cwe} | ${textCell(finding.message)} | ` +
         `${tableCell(finding.file)} |`,
     );
   }
@@ -110,15 +165,15 @@ function findingsSection(findings: Finding[]): string[] {
   const shown = findings.slice(0, 50);
   const lines = [
     "### Findings",
-    "| Sev | Rule | Location | Engine |",
-    "|---|---|---|---|",
+    "| Sev | Rule | Details | Location | Engine |",
+    "|---|---|---|---|---|",
   ];
   for (const finding of shown) {
     const cwe = finding.cwe ? ` (${finding.cwe})` : "";
     lines.push(
       `| ${SEV_EMOJI[finding.severity]} ${finding.severity} | ` +
-        `${code(finding.ruleId)}${cwe} | ${code(findingLocation(finding))} | ` +
-        `${tableCell(finding.engine)} |`,
+        `${ruleCell(finding)}${cwe} | ${textCell(finding.message)} | ` +
+        `${code(findingLocation(finding))} | ${tableCell(finding.engine)} |`,
     );
   }
   if (findings.length > shown.length) {

@@ -89387,6 +89387,7 @@ function parseVulnerabilities(vulnerabilities, artifact, imageRef) {
             file: artifact,
             line: 0,
             cwe: vulnerability.CweIDs?.[0],
+            url: vulnerability.PrimaryURL,
             source: imageRef ? `image:${imageRef}` : undefined,
         };
     });
@@ -89401,6 +89402,7 @@ function parseMisconfigurations(misconfigurations, artifact, imageRef) {
             message: `${misconfiguration.Title ?? misconfiguration.ID}: ${misconfiguration.Message ?? ""}`.trim(),
             file: artifact,
             line: misconfiguration.CauseMetadata?.StartLine ?? 0,
+            url: misconfiguration.PrimaryURL,
             source: imageRef ? `image:${imageRef}` : undefined,
         };
     });
@@ -90359,6 +90361,58 @@ function tableCell(value) {
 function code(value) {
     return `\`${tableCell(value).replaceAll("`", "'")}\``;
 }
+// Neutralizes markdown link/image syntax so untrusted, engine-sourced finding text
+// (e.g. a custom Semgrep rule's interpolated `message:`) can't render as a live
+// link or image in the job summary. Safe to use anywhere the text is NOT already
+// wrapped in a code span (code spans are never parsed as markdown by CommonMark).
+function textCell(value) {
+    return tableCell(value).replaceAll("[", String.raw `\[`);
+}
+// Keyed by EngineName (not a bare string) so a typo in an engine key fails to
+// compile instead of silently never matching.
+// Only link when a canonical URL can be derived with confidence: a fixed
+// engine-doc naming convention. Engine-supplied advisory URLs (Trivy) and the
+// CWE fallback are handled separately in findingUrl().
+const ENGINE_RULE_URL = {
+    hadolint: (ruleId) => {
+        if (/^DL\d+$/.test(ruleId))
+            return `https://github.com/hadolint/hadolint/wiki/${ruleId}`;
+        if (/^SC\d+$/.test(ruleId))
+            return `https://www.shellcheck.net/wiki/${ruleId}`;
+        return undefined;
+    },
+    gosec: (ruleId) => (/^G\d+$/.test(ruleId) ? `https://securego.io/docs/rules/${ruleId.toLowerCase()}.html` : undefined),
+    eslint: (ruleId) => (ruleId.includes("/") ? undefined : `https://eslint.org/docs/latest/rules/${ruleId}`),
+};
+// finding.url is engine-supplied (currently only Trivy's PrimaryURL) and not
+// type-enforced beyond "string" — reject anything that isn't a well-formed
+// http(s) URL rather than rendering it as a link destination.
+function isHttpUrl(value) {
+    try {
+        const parsed = new URL(value);
+        return parsed.protocol === "http:" || parsed.protocol === "https:";
+    }
+    catch {
+        return false;
+    }
+}
+function findingUrl(finding) {
+    if (finding.url && isHttpUrl(finding.url))
+        return finding.url;
+    const specific = ENGINE_RULE_URL[finding.engine]?.(finding.ruleId);
+    if (specific)
+        return specific;
+    const cweMatch = finding.cwe ? /^CWE-(\d+)$/.exec(finding.cwe) : null;
+    return cweMatch ? `https://cwe.mitre.org/data/definitions/${cweMatch[1]}.html` : undefined;
+}
+function ruleCell(finding) {
+    const label = code(finding.ruleId);
+    const url = findingUrl(finding);
+    // Angle-bracket the destination so a URL containing "(" or ")" (unlikely today,
+    // but not guaranteed for future engine-supplied PrimaryURL values) can't
+    // truncate the link.
+    return url ? `[${label}](<${url}>)` : label;
+}
 function severitySection(counts) {
     return [
         "| Severity | Count |",
@@ -90399,11 +90453,11 @@ function secretsSection(findings) {
     const lines = [
         "### 🔑 Secrets Detected (gitleaks)",
         "",
-        "| Rule | Location | Severity |",
-        "|---|---|---|",
+        "| Rule | Details | Location | Severity |",
+        "|---|---|---|---|",
     ];
     for (const finding of secrets) {
-        lines.push(`| ${code(finding.ruleId)} | ${code(findingLocation(finding))} | ` +
+        lines.push(`| ${ruleCell(finding)} | ${textCell(finding.message)} | ${code(findingLocation(finding))} | ` +
             `${SEV_EMOJI[finding.severity]} ${finding.severity} |`);
     }
     return [
@@ -90427,7 +90481,7 @@ function imageSection(findings) {
     for (const finding of imageFindings) {
         const cwe = finding.cwe ? ` (${finding.cwe})` : "";
         lines.push(`| ${SEV_EMOJI[finding.severity]} ${finding.severity} | ` +
-            `${code(finding.ruleId)}${cwe} | ${tableCell(finding.message)} | ` +
+            `${ruleCell(finding)}${cwe} | ${textCell(finding.message)} | ` +
             `${tableCell(finding.file)} |`);
     }
     return [...lines, ""];
@@ -90438,14 +90492,14 @@ function findingsSection(findings) {
     const shown = findings.slice(0, 50);
     const lines = [
         "### Findings",
-        "| Sev | Rule | Location | Engine |",
-        "|---|---|---|---|",
+        "| Sev | Rule | Details | Location | Engine |",
+        "|---|---|---|---|---|",
     ];
     for (const finding of shown) {
         const cwe = finding.cwe ? ` (${finding.cwe})` : "";
         lines.push(`| ${SEV_EMOJI[finding.severity]} ${finding.severity} | ` +
-            `${code(finding.ruleId)}${cwe} | ${code(findingLocation(finding))} | ` +
-            `${tableCell(finding.engine)} |`);
+            `${ruleCell(finding)}${cwe} | ${textCell(finding.message)} | ` +
+            `${code(findingLocation(finding))} | ${tableCell(finding.engine)} |`);
     }
     if (findings.length > shown.length) {
         lines.push("", `_… and ${findings.length - shown.length} more findings._`);
