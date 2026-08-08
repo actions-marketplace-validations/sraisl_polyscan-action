@@ -90384,8 +90384,20 @@ const ENGINE_RULE_URL = {
     gosec: (ruleId) => (/^G\d+$/.test(ruleId) ? `https://securego.io/docs/rules/${ruleId.toLowerCase()}.html` : undefined),
     eslint: (ruleId) => (ruleId.includes("/") ? undefined : `https://eslint.org/docs/latest/rules/${ruleId}`),
 };
+// finding.url is engine-supplied (currently only Trivy's PrimaryURL) and not
+// type-enforced beyond "string" — reject anything that isn't a well-formed
+// http(s) URL rather than rendering it as a link destination.
+function isHttpUrl(value) {
+    try {
+        const parsed = new URL(value);
+        return parsed.protocol === "http:" || parsed.protocol === "https:";
+    }
+    catch {
+        return false;
+    }
+}
 function findingUrl(finding) {
-    if (finding.url)
+    if (finding.url && isHttpUrl(finding.url))
         return finding.url;
     const specific = ENGINE_RULE_URL[finding.engine]?.(finding.ruleId);
     if (specific)

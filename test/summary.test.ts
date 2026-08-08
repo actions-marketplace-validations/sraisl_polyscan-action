@@ -141,6 +141,36 @@ test("renderSummary leaves the rule as plain text with no link source", () => {
   assert.doesNotMatch(summary, /\[`SomeCustomRule`]/);
 });
 
+test("renderSummary rejects a non-http(s) finding.url and falls back to CWE", () => {
+  const summary = renderFor({
+    engine: "trivy",
+    ruleId: "CVE-9999-0001",
+    severity: "high",
+    message: "some vuln",
+    file: "go.sum",
+    line: 0,
+    url: "javascript:alert(1)",
+    cwe: "CWE-79",
+  });
+  assert.doesNotMatch(summary, /javascript:alert/);
+  assert.match(summary, /\[`CVE-9999-0001`]\(<https:\/\/cwe\.mitre\.org\/data\/definitions\/79\.html>\)/);
+});
+
+test("renderSummary rejects a malformed finding.url with no fallback available", () => {
+  const summary = renderFor({
+    engine: "trivy",
+    ruleId: "CVE-9999-0002",
+    severity: "medium",
+    message: "some other vuln",
+    file: "go.sum",
+    line: 0,
+    url: "not a valid url",
+  });
+  assert.doesNotMatch(summary, /not a valid url/);
+  assert.match(summary, /`CVE-9999-0002`/);
+  assert.doesNotMatch(summary, /\[`CVE-9999-0002`]/);
+});
+
 test("renderSummary shows the finding message in the Details column", () => {
   const summary = renderFor({
     engine: "trivy",

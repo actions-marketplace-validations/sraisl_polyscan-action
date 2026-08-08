@@ -45,8 +45,20 @@ const ENGINE_RULE_URL: Partial<Record<EngineName, (ruleId: string) => string | u
   eslint: (ruleId) => (ruleId.includes("/") ? undefined : `https://eslint.org/docs/latest/rules/${ruleId}`),
 };
 
+// finding.url is engine-supplied (currently only Trivy's PrimaryURL) and not
+// type-enforced beyond "string" — reject anything that isn't a well-formed
+// http(s) URL rather than rendering it as a link destination.
+function isHttpUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 function findingUrl(finding: Finding): string | undefined {
-  if (finding.url) return finding.url;
+  if (finding.url && isHttpUrl(finding.url)) return finding.url;
 
   const specific = ENGINE_RULE_URL[finding.engine as EngineName]?.(finding.ruleId);
   if (specific) return specific;
