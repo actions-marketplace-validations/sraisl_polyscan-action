@@ -11,6 +11,7 @@ const BASE_VULN = {
   Severity: "HIGH",
   Title: "Prototype pollution",
   CweIDs: ["CWE-1321"],
+  PrimaryURL: "https://avd.aquasec.com/nvd/cve-2021-1234",
 };
 
 const BASE_MISCONF = {
@@ -19,6 +20,7 @@ const BASE_MISCONF = {
   Message: "Dockerfile should not run as root",
   Severity: "MEDIUM",
   CauseMetadata: { StartLine: 3 },
+  PrimaryURL: "https://avd.aquasec.com/misconfig/avd-ds-0001",
 };
 
 test("parseTrivyData: vulnerability with HIGH severity and CWE", () => {
@@ -31,6 +33,13 @@ test("parseTrivyData: vulnerability with HIGH severity and CWE", () => {
   assert.equal(f.file, "package-lock.json");
   assert.equal(f.line, 0);
   assert.equal(f.cwe, "CWE-1321");
+  assert.equal(f.url, "https://avd.aquasec.com/nvd/cve-2021-1234");
+});
+
+test("parseTrivyData: vulnerability without PrimaryURL leaves url undefined", () => {
+  const { PrimaryURL: _, ...noUrl } = BASE_VULN;
+  const data = { Results: [{ Target: "package-lock.json", Vulnerabilities: [noUrl] }] };
+  assert.equal(parseTrivyData(data)[0].url, undefined);
 });
 
 test("parseTrivyData: CRITICAL severity maps to critical", () => {
@@ -76,6 +85,7 @@ test("parseTrivyData: misconfiguration with StartLine and MEDIUM severity", () =
   assert.equal(f.message, "Missing USER instruction: Dockerfile should not run as root");
   assert.equal(f.file, "Dockerfile");
   assert.equal(f.line, 3);
+  assert.equal(f.url, "https://avd.aquasec.com/misconfig/avd-ds-0001");
 });
 
 test("parseTrivyData: vulns and misconfigs in the same result are both parsed", () => {

@@ -80,6 +80,7 @@ function parseVulnerabilities(
       Severity?: string;
       Title?: string;
       CweIDs?: string[];
+      PrimaryURL?: string;
     };
     const fixed = vulnerability.FixedVersion ? ` (fixed in ${vulnerability.FixedVersion})` : "";
     return {
@@ -92,6 +93,7 @@ function parseVulnerabilities(
       file: artifact,
       line: 0,
       cwe: vulnerability.CweIDs?.[0],
+      url: vulnerability.PrimaryURL,
       source: imageRef ? `image:${imageRef}` : undefined,
     };
   });
@@ -109,6 +111,7 @@ function parseMisconfigurations(
       Message?: string;
       Severity?: string;
       CauseMetadata?: { StartLine?: number };
+      PrimaryURL?: string;
     };
     return {
       engine: "trivy",
@@ -117,6 +120,7 @@ function parseMisconfigurations(
       message: `${misconfiguration.Title ?? misconfiguration.ID}: ${misconfiguration.Message ?? ""}`.trim(),
       file: artifact,
       line: misconfiguration.CauseMetadata?.StartLine ?? 0,
+      url: misconfiguration.PrimaryURL,
       source: imageRef ? `image:${imageRef}` : undefined,
     };
   });
