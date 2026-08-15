@@ -56,7 +56,8 @@ jobs:
       - name: Check for changes
         id: diff
         run: |
-          if git status --porcelain -- tools.lock.json dist | grep -q .; then
+          status=$(git status --porcelain -- tools.lock.json dist)
+          if [ -n "$status" ]; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
