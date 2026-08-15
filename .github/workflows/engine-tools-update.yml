@@ -1,0 +1,99 @@
+name: Engine Tools Update
+
+# Weekly check for new versions of the scan-engine binaries pinned in
+# tools.lock.json (bandit, semgrep, gitleaks, trivy, ...). Dependabot cannot
+# see this file — it's a custom lockfile, not a standard package manifest —
+# so this workflow drives scripts/engine-tools.mjs instead and opens a PR
+# with any available bumps (tools.lock.json + rebuilt dist/).
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Monday 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: engine-tools-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      - run: npm ci
+
+      - name: Check for tool updates
+        run: |
+          node scripts/engine-tools.mjs check | tee engine-check.txt
+          awk -F'\t' 'NR>1 && $4=="update available" {print $1"\t"$3}' engine-check.txt > engine-updates.txt
+
+      - name: Apply updates
+        run: |
+          if [ ! -s engine-updates.txt ]; then
+            echo "No engine updates available."
+            exit 0
+          fi
+          while IFS=$'\t' read -r tool latest; do
+            echo "::group::${tool} -> ${latest}"
+            npm run engines:update -- "$tool" "$latest" --skip-project-checks
+            echo "::endgroup::"
+          done < engine-updates.txt
+
+          npm run typecheck
+          npm test
+          npm run build
+
+      - name: Check for changes
+        id: diff
+        run: |
+          if git status --porcelain -- tools.lock.json dist | grep -q .; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open pull request
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          branch="automation/engine-tools-update"
+          summary=$(awk -F'\t' '{print "- `"$1"` -> `"$2"`"}' engine-updates.txt)
+
+          git \
+            -c user.name="github-actions[bot]" \
+            -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            checkout -b "$branch"
+          git add tools.lock.json dist
+          git \
+            -c user.name="github-actions[bot]" \
+            -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -m "chore: update scan engine tool versions
+
+          $summary"
+          git fetch origin "$branch:refs/remotes/origin/$branch" || true
+          git push --force-with-lease origin "$branch"
+
+          body="Automated update of scan engine versions pinned in \`tools.lock.json\`, verified via \`npm run typecheck && npm test && npm run build\`.
+
+          $summary"
+
+          if gh pr list --head "$branch" --state open --json number --jq 'length' | grep -qx 0; then
+            gh pr create \
+              --title "chore: update scan engine tool versions" \
+              --body "$body" \
+              --head "$branch" \
+              --base main
+          else
+            gh pr edit "$branch" --body "$body"
+          fi
