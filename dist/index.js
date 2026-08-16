@@ -89528,11 +89528,15 @@ const tool_versions_1 = __nccwpck_require__(88947);
 const ZIZMOR = tool_versions_1.TOOLS.zizmor;
 function hasWorkflows(root) {
     const workflowsDir = path.join(root, ".github", "workflows");
-    if (!fs.existsSync(workflowsDir))
+    try {
+        return fs
+            .readdirSync(workflowsDir, { withFileTypes: true })
+            .some((entry) => entry.isFile() && /\.ya?ml$/i.test(entry.name));
+    }
+    catch {
+        // Missing, not a directory, or unreadable — treat as "no workflows".
         return false;
-    return fs
-        .readdirSync(workflowsDir, { withFileTypes: true })
-        .some((entry) => entry.isFile() && /\.ya?ml$/i.test(entry.name));
+    }
 }
 // zizmor SARIF only emits error/warning; map like hadolint's SARIF output.
 function mapSeverity(level) {
@@ -89545,7 +89549,7 @@ function mapSeverity(level) {
             return "low";
     }
 }
-function parseZizmorSarif(sarif) {
+function parseZizmorSarif(sarif, abs) {
     const findings = [];
     for (const runObj of sarif.runs ?? []) {
         for (const r of runObj.results ?? []) {
@@ -89558,7 +89562,9 @@ function parseZizmorSarif(sarif) {
                 ruleId,
                 severity: mapSeverity(result.level ?? ""),
                 message: result.message?.text ?? ruleId,
-                file: uri.replace(/^file:\/\//, ""),
+                // zizmor emits URIs relative to the scanned directory already; strip
+                // a file:// scheme and the abs prefix defensively, like hadolint's parser.
+                file: uri.replace(/^file:\/\//, "").replace(abs + "/", ""),
                 line: loc?.region?.startLine ?? 0,
                 column: loc?.region?.startColumn,
             });
@@ -89604,7 +89610,7 @@ async function runZizmor(target) {
     }
     try {
         const sarif = JSON.parse(result.stdout);
-        return { engine: "zizmor", findings: parseZizmorSarif(sarif), status: "success" };
+        return { engine: "zizmor", findings: parseZizmorSarif(sarif, abs), status: "success" };
     }
     catch (err) {
         return {

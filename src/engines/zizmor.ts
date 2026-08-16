@@ -15,10 +15,14 @@ const ZIZMOR = TOOLS.zizmor;
 
 export function hasWorkflows(root: string): boolean {
   const workflowsDir = path.join(root, ".github", "workflows");
-  if (!fs.existsSync(workflowsDir)) return false;
-  return fs
-    .readdirSync(workflowsDir, { withFileTypes: true })
-    .some((entry) => entry.isFile() && /\.ya?ml$/i.test(entry.name));
+  try {
+    return fs
+      .readdirSync(workflowsDir, { withFileTypes: true })
+      .some((entry) => entry.isFile() && /\.ya?ml$/i.test(entry.name));
+  } catch {
+    // Missing, not a directory, or unreadable — treat as "no workflows".
+    return false;
+  }
 }
 
 // zizmor SARIF only emits error/warning; map like hadolint's SARIF output.
@@ -33,7 +37,7 @@ function mapSeverity(level: string): Severity {
   }
 }
 
-export function parseZizmorSarif(sarif: unknown): Finding[] {
+export function parseZizmorSarif(sarif: unknown, abs: string): Finding[] {
   const findings: Finding[] = [];
   for (const runObj of (sarif as { runs?: unknown[] }).runs ?? []) {
     for (const r of (runObj as { results?: unknown[] }).results ?? []) {
@@ -56,7 +60,9 @@ export function parseZizmorSarif(sarif: unknown): Finding[] {
         ruleId,
         severity: mapSeverity(result.level ?? ""),
         message: result.message?.text ?? ruleId,
-        file: uri.replace(/^file:\/\//, ""),
+        // zizmor emits URIs relative to the scanned directory already; strip
+        // a file:// scheme and the abs prefix defensively, like hadolint's parser.
+        file: uri.replace(/^file:\/\//, "").replace(abs + "/", ""),
         line: loc?.region?.startLine ?? 0,
         column: loc?.region?.startColumn,
       });
@@ -105,7 +111,7 @@ export async function runZizmor(target: string): Promise<EngineResult> {
 
   try {
     const sarif = JSON.parse(result.stdout);
-    return { engine: "zizmor", findings: parseZizmorSarif(sarif), status: "success" };
+    return { engine: "zizmor", findings: parseZizmorSarif(sarif, abs), status: "success" };
   } catch (err) {
     return {
       engine: "zizmor",

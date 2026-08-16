@@ -6,6 +6,8 @@ import * as path from "node:path";
 
 import { hasWorkflows, parseZizmorSarif } from "../src/engines/zizmor";
 
+const ABS = "/repo";
+
 function sarifWith(results: unknown[]): unknown {
   return { runs: [{ results }] };
 }
@@ -44,7 +46,7 @@ test("parseZizmorSarif: error level maps to high", () => {
       column: 1,
     }),
   ]);
-  const [f] = parseZizmorSarif(sarif);
+  const [f] = parseZizmorSarif(sarif, ABS);
   assert.equal(f.engine, "zizmor");
   assert.equal(f.ruleId, "zizmor/dangerous-triggers");
   assert.equal(f.severity, "high");
@@ -64,7 +66,7 @@ test("parseZizmorSarif: warning level maps to medium", () => {
       line: 9,
     }),
   ]);
-  assert.equal(parseZizmorSarif(sarif)[0].severity, "medium");
+  assert.equal(parseZizmorSarif(sarif, ABS)[0].severity, "medium");
 });
 
 test("parseZizmorSarif: note level maps to low", () => {
@@ -77,7 +79,20 @@ test("parseZizmorSarif: note level maps to low", () => {
       line: 1,
     }),
   ]);
-  assert.equal(parseZizmorSarif(sarif)[0].severity, "low");
+  assert.equal(parseZizmorSarif(sarif, ABS)[0].severity, "low");
+});
+
+test("parseZizmorSarif: relative uris (zizmor's normal output) pass through unchanged", () => {
+  const sarif = sarifWith([
+    sarifResult({
+      ruleId: "zizmor/unpinned-uses",
+      level: "error",
+      message: "action is not pinned to a hash",
+      uri: ".github/workflows/ci.yml",
+      line: 5,
+    }),
+  ]);
+  assert.equal(parseZizmorSarif(sarif, ABS)[0].file, ".github/workflows/ci.yml");
 });
 
 test("parseZizmorSarif: strips the file:// scheme from the uri", () => {
@@ -90,7 +105,20 @@ test("parseZizmorSarif: strips the file:// scheme from the uri", () => {
       line: 5,
     }),
   ]);
-  assert.equal(parseZizmorSarif(sarif)[0].file, ".github/workflows/ci.yml");
+  assert.equal(parseZizmorSarif(sarif, ABS)[0].file, ".github/workflows/ci.yml");
+});
+
+test("parseZizmorSarif: strips an absolute abs-prefixed uri, defensively", () => {
+  const sarif = sarifWith([
+    sarifResult({
+      ruleId: "zizmor/unpinned-uses",
+      level: "error",
+      message: "action is not pinned to a hash",
+      uri: `file://${ABS}/.github/workflows/ci.yml`,
+      line: 5,
+    }),
+  ]);
+  assert.equal(parseZizmorSarif(sarif, ABS)[0].file, ".github/workflows/ci.yml");
 });
 
 test("parseZizmorSarif: missing ruleId falls back to the engine name", () => {
@@ -103,7 +131,7 @@ test("parseZizmorSarif: missing ruleId falls back to the engine name", () => {
       ],
     },
   ]);
-  const [f] = parseZizmorSarif(sarif);
+  const [f] = parseZizmorSarif(sarif, ABS);
   assert.equal(f.ruleId, "zizmor");
 });
 
@@ -113,15 +141,15 @@ test("parseZizmorSarif: multiple results all parsed", () => {
     sarifResult({ ruleId: "zizmor/dangerous-triggers", level: "error", message: "b", uri: ".github/workflows/ci.yml", line: 2 }),
     sarifResult({ ruleId: "zizmor/unpinned-uses", level: "error", message: "c", uri: ".github/workflows/release.yml", line: 3 }),
   ]);
-  assert.equal(parseZizmorSarif(sarif).length, 3);
+  assert.equal(parseZizmorSarif(sarif, ABS).length, 3);
 });
 
 test("parseZizmorSarif: empty results returns empty array", () => {
-  assert.deepEqual(parseZizmorSarif(sarifWith([])), []);
+  assert.deepEqual(parseZizmorSarif(sarifWith([]), ABS), []);
 });
 
 test("parseZizmorSarif: empty runs returns empty array", () => {
-  assert.deepEqual(parseZizmorSarif({ runs: [] }), []);
+  assert.deepEqual(parseZizmorSarif({ runs: [] }, ABS), []);
 });
 
 test("hasWorkflows: true when .github/workflows contains a .yml or .yaml file", () => {
@@ -151,6 +179,18 @@ test("hasWorkflows: false when .github/workflows has no yml/yaml files", () => {
     const workflows = path.join(root, ".github", "workflows");
     fs.mkdirSync(workflows, { recursive: true });
     fs.writeFileSync(path.join(workflows, "README.md"), "not a workflow\n");
+    assert.equal(hasWorkflows(root), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("hasWorkflows: false (not throws) when .github/workflows exists but is a file, not a directory", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "polyscan-zizmor-test-"));
+  try {
+    fs.mkdirSync(path.join(root, ".github"), { recursive: true });
+    fs.writeFileSync(path.join(root, ".github", "workflows"), "not a directory\n");
+    assert.doesNotThrow(() => hasWorkflows(root));
     assert.equal(hasWorkflows(root), false);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
