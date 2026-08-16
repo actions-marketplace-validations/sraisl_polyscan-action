@@ -11,7 +11,7 @@ inputs:
     required: false
     default: "."
   engines:
-    description: "Comma-separated engines to run, or 'all': semgrep,opengrep,bandit,eslint,spotbugs,trivy,detekt,gitleaks,gosec,hadolint (all excludes opt-in opengrep)"
+    description: "Comma-separated engines to run, or 'all': semgrep,opengrep,bandit,eslint,spotbugs,trivy,detekt,gitleaks,gosec,hadolint,zizmor (all excludes opt-in opengrep)"
     required: false
     default: "all"
   opengrep-config:

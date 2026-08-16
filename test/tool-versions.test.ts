@@ -21,6 +21,7 @@ const EXPECTED_TOOLS = [
   "semgrep",
   "spotbugs",
   "trivy",
+  "zizmor",
 ];
 
 test("tool lock contains every scanner dependency", () => {
@@ -42,6 +43,7 @@ test("downloaded binary tools have pinned SHA-256 digests", () => {
     "opengrep",
     "spotbugs",
     "trivy",
+    "zizmor",
   ] as const) {
     assert.match(TOOLS[name].sha256, /^[a-f0-9]{64}$/);
   }
@@ -71,5 +73,9 @@ test("tool metadata expands to the existing download URLs", () => {
   assert.equal(
     mavenArtifactUrl(TOOLS.findsecbugs),
     "https://repo1.maven.org/maven2/com/h3xstream/findsecbugs/findsecbugs-plugin/1.13.0/findsecbugs-plugin-1.13.0.jar",
+  );
+  assert.equal(
+    githubReleaseUrl(TOOLS.zizmor),
+    "https://github.com/zizmorcore/zizmor/releases/download/v1.29.0/zizmor-x86_64-unknown-linux-gnu.tar.gz",
   );
 });

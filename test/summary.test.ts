@@ -115,6 +115,35 @@ test("renderSummary leaves gosec's fallback ruleId ('gosec') unlinked", () => {
   assert.doesNotMatch(summary, /\[`gosec`]/);
 });
 
+test("renderSummary links zizmor rules to the zizmor docs", () => {
+  const summary = renderFor({
+    engine: "zizmor",
+    ruleId: "zizmor/dangerous-triggers",
+    severity: "high",
+    message: "pull_request_target is almost always used insecurely",
+    file: ".github/workflows/ci.yml",
+    line: 2,
+  });
+  assert.match(
+    summary,
+    /\[`zizmor\/dangerous-triggers`]\(<https:\/\/docs\.zizmor\.sh\/audits\/#dangerous-triggers>\)/,
+  );
+});
+
+test("renderSummary leaves zizmor's fallback ruleId ('zizmor') unlinked", () => {
+  // src/engines/zizmor.ts falls back to the literal engine name when SARIF omits ruleId.
+  const summary = renderFor({
+    engine: "zizmor",
+    ruleId: "zizmor",
+    severity: "low",
+    message: "Unrecognized zizmor issue",
+    file: ".github/workflows/ci.yml",
+    line: 1,
+  });
+  assert.match(summary, /`zizmor`/);
+  assert.doesNotMatch(summary, /\[`zizmor`]/);
+});
+
 test("renderSummary falls back to a CWE link when no engine-specific link applies", () => {
   const summary = renderFor({
     engine: "bandit",

@@ -43,6 +43,8 @@ const ENGINE_RULE_URL: Partial<Record<EngineName, (ruleId: string) => string | u
   },
   gosec: (ruleId) => (/^G\d+$/.test(ruleId) ? `https://securego.io/docs/rules/${ruleId.toLowerCase()}.html` : undefined),
   eslint: (ruleId) => (ruleId.includes("/") ? undefined : `https://eslint.org/docs/latest/rules/${ruleId}`),
+  zizmor: (ruleId) =>
+    ruleId.startsWith("zizmor/") ? `https://docs.zizmor.sh/audits/#${ruleId.slice("zizmor/".length)}` : undefined,
 };
 
 // finding.url is engine-supplied (currently only Trivy's PrimaryURL) and not

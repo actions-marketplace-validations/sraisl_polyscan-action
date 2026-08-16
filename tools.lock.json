@@ -87,6 +87,14 @@
       "tagTemplate": "v{version}",
       "assetTemplate": "trivy_{version}_Linux-64bit.tar.gz",
       "sha256": "bbb64b9695866ce4a7a8f5c9592002c5961cab378577fa3f8a040df362b9b2ea"
+    },
+    "zizmor": {
+      "provider": "github",
+      "repository": "zizmorcore/zizmor",
+      "version": "1.29.0",
+      "tagTemplate": "v{version}",
+      "assetTemplate": "zizmor-x86_64-unknown-linux-gnu.tar.gz",
+      "sha256": "dd96df044a6e8538d5f423790f453bdd03d49e5b2bcc38214acc41a2f1297839"
     }
   }
 }

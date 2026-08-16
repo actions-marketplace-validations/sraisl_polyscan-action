@@ -15,6 +15,7 @@ import { runDetekt } from "./engines/detekt";
 import { runGitleaks } from "./engines/gitleaks";
 import { runGosec } from "./engines/gosec";
 import { runHadolint } from "./engines/hadolint";
+import { runZizmor } from "./engines/zizmor";
 import { evaluateGate } from "./gate";
 import { toSarif } from "./sarif";
 import { toSbom } from "./sbom";
@@ -121,6 +122,8 @@ async function runEngine(
         return await runGosec(target);
       case "hadolint":
         return await runHadolint(target);
+      case "zizmor":
+        return await runZizmor(target);
       default:
         return { engine: name, findings: [], status: "failed", note: "unknown engine" };
     }

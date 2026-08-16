@@ -26,6 +26,7 @@
     "eslint",
     "gosec",
     "spotbugs",
+    "zizmor",
     "sarif",
     "sbom",
     "github-action"
