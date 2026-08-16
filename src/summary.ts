@@ -115,10 +115,10 @@ function findingLocation(finding: Finding): string {
   return finding.line > 0 ? `${cleanFile}:${finding.line}` : cleanFile;
 }
 
-const SECRET_ENGINES = new Set(["gitleaks", "trufflehog"]);
+const SECRET_ENGINES: ReadonlySet<EngineName> = new Set<EngineName>(["gitleaks", "trufflehog"]);
 
 function secretsSection(findings: Finding[]): string[] {
-  const secrets = findings.filter((finding) => SECRET_ENGINES.has(finding.engine));
+  const secrets = findings.filter((finding) => SECRET_ENGINES.has(finding.engine as EngineName));
   if (secrets.length === 0) return [];
 
   const lines = [

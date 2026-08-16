@@ -22,7 +22,7 @@ const TRUFFLEHOG = TOOLS.trufflehog;
 // confirmed active breach, so it maps to critical; anything else defaults
 // to high rather than risking under-classifying an exposed credential.
 function mapSeverity(level: string): Severity {
-  return level === "error" ? "critical" : "high";
+  return (level || "").toLowerCase() === "error" ? "critical" : "high";
 }
 
 export function parseTrufflehogSarif(sarif: unknown, abs: string): Finding[] {
@@ -85,11 +85,16 @@ export async function runTrufflehog(target: string): Promise<EngineResult> {
 
   const result = await run(bin, ["filesystem", "--sarif", "--no-update", "--log-level=-1", abs]);
   if (!result.stdout.trim()) {
+    // Deliberately not including result.stderr here: this engine actively
+    // verifies live credentials, and its stderr is not a structured,
+    // redaction-guaranteed surface the way its SARIF output is — an exit
+    // code is enough to diagnose a failure without risking a secret value
+    // reaching the Actions log.
     return {
       engine: "trufflehog",
       findings: [],
       status: "failed",
-      note: result.stderr.slice(0, 200) || "trufflehog produced no output",
+      note: `trufflehog produced no output (exit ${result.exitCode})`,
     };
   }
 
