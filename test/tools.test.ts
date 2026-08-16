@@ -80,3 +80,92 @@ test("cachedTool installs once and reuses the cached executable", async () => {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("cachedTool retries on err.code === ETXTBSY and then succeeds", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "polyscan-tool-cache-retry-"));
+  const previousCache = process.env.RUNNER_TOOL_CACHE;
+  const previousTemp = process.env.RUNNER_TEMP;
+  process.env.RUNNER_TOOL_CACHE = path.join(root, "cache");
+  process.env.RUNNER_TEMP = path.join(root, "temp");
+  fs.mkdirSync(process.env.RUNNER_TOOL_CACHE, { recursive: true });
+  fs.mkdirSync(process.env.RUNNER_TEMP, { recursive: true });
+
+  let attempts = 0;
+  try {
+    const install = async (directory: string) => {
+      attempts += 1;
+      if (attempts < 2) {
+        const err = new Error("spawn ETXTBSY") as NodeJS.ErrnoException;
+        err.code = "ETXTBSY";
+        throw err;
+      }
+      fs.writeFileSync(path.join(directory, "tool"), "binary");
+    };
+    const name = `polyscan-test-retry-${process.pid}-${Date.now()}`;
+    const result = await cachedTool(name, "1.0.0", "tool", install);
+    assert.equal(attempts, 2);
+    assert.equal(fs.readFileSync(result, "utf8"), "binary");
+  } finally {
+    if (previousCache === undefined) delete process.env.RUNNER_TOOL_CACHE;
+    else process.env.RUNNER_TOOL_CACHE = previousCache;
+    if (previousTemp === undefined) delete process.env.RUNNER_TEMP;
+    else process.env.RUNNER_TEMP = previousTemp;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("cachedTool retries on an ETXTBSY message when err.code is absent", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "polyscan-tool-cache-retry-fallback-"));
+  const previousCache = process.env.RUNNER_TOOL_CACHE;
+  const previousTemp = process.env.RUNNER_TEMP;
+  process.env.RUNNER_TOOL_CACHE = path.join(root, "cache");
+  process.env.RUNNER_TEMP = path.join(root, "temp");
+  fs.mkdirSync(process.env.RUNNER_TOOL_CACHE, { recursive: true });
+  fs.mkdirSync(process.env.RUNNER_TEMP, { recursive: true });
+
+  let attempts = 0;
+  try {
+    const install = async (directory: string) => {
+      attempts += 1;
+      if (attempts < 2) throw new Error("spawn ETXTBSY");
+      fs.writeFileSync(path.join(directory, "tool"), "binary");
+    };
+    const name = `polyscan-test-retry-fallback-${process.pid}-${Date.now()}`;
+    const result = await cachedTool(name, "1.0.0", "tool", install);
+    assert.equal(attempts, 2);
+    assert.equal(fs.readFileSync(result, "utf8"), "binary");
+  } finally {
+    if (previousCache === undefined) delete process.env.RUNNER_TOOL_CACHE;
+    else process.env.RUNNER_TOOL_CACHE = previousCache;
+    if (previousTemp === undefined) delete process.env.RUNNER_TEMP;
+    else process.env.RUNNER_TEMP = previousTemp;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("cachedTool does not retry non-transient install errors", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "polyscan-tool-cache-nonretry-"));
+  const previousCache = process.env.RUNNER_TOOL_CACHE;
+  const previousTemp = process.env.RUNNER_TEMP;
+  process.env.RUNNER_TOOL_CACHE = path.join(root, "cache");
+  process.env.RUNNER_TEMP = path.join(root, "temp");
+  fs.mkdirSync(process.env.RUNNER_TOOL_CACHE, { recursive: true });
+  fs.mkdirSync(process.env.RUNNER_TEMP, { recursive: true });
+
+  let attempts = 0;
+  try {
+    const install = async () => {
+      attempts += 1;
+      throw new Error("checksum mismatch");
+    };
+    const name = `polyscan-test-nonretry-${process.pid}-${Date.now()}`;
+    await assert.rejects(cachedTool(name, "1.0.0", "tool", install), /checksum mismatch/);
+    assert.equal(attempts, 1);
+  } finally {
+    if (previousCache === undefined) delete process.env.RUNNER_TOOL_CACHE;
+    else process.env.RUNNER_TOOL_CACHE = previousCache;
+    if (previousTemp === undefined) delete process.env.RUNNER_TEMP;
+    else process.env.RUNNER_TEMP = previousTemp;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
