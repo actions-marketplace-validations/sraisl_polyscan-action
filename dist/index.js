@@ -89538,7 +89538,8 @@ function hasWorkflows(root) {
         return false;
     }
 }
-// zizmor SARIF only emits error/warning; map like hadolint's SARIF output.
+// Observed zizmor SARIF only emits error/warning; any other/missing level
+// (e.g. "note") is treated as low, defensively, like hadolint's parser.
 function mapSeverity(level) {
     switch ((level || "").toLowerCase()) {
         case "error":
