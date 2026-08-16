@@ -90770,6 +90770,15 @@ async function withTempDir(prefix, run) {
         fs.rmSync(directory, { recursive: true, force: true });
     }
 }
+// Concurrent tool installs each spawn subprocesses (tar/unzip) to extract
+// their archive. Under load this occasionally hits a transient Linux/Node
+// "spawn ETXTBSY" race unrelated to the archive itself, so a fresh attempt
+// (fresh temp dir, re-downloaded archive) is retried a few times.
+const INSTALL_RETRY_ATTEMPTS = 3;
+const INSTALL_RETRY_DELAY_MS = 250;
+function isTransientSpawnError(err) {
+    return /ETXTBSY/.test(String(err));
+}
 async function cachedTool(name, version, executable, install) {
     const cached = tc.find(name, version, process.arch);
     if (cached) {
@@ -90778,14 +90787,24 @@ async function cachedTool(name, version, executable, install) {
             return cachedExecutable;
         throw new Error(`${name} cache entry is incomplete: missing ${executable}`);
     }
-    return withTempDir(`polyscan-${name}-`, async (directory) => {
-        await install(directory);
-        const source = path.join(directory, executable);
-        if (!fs.existsSync(source))
-            throw new Error(`${name} installation did not produce ${executable}`);
-        const cachedDirectory = await tc.cacheDir(directory, name, version, process.arch);
-        return path.join(cachedDirectory, executable);
-    });
+    for (let attempt = 1; attempt <= INSTALL_RETRY_ATTEMPTS; attempt++) {
+        try {
+            return await withTempDir(`polyscan-${name}-`, async (directory) => {
+                await install(directory);
+                const source = path.join(directory, executable);
+                if (!fs.existsSync(source))
+                    throw new Error(`${name} installation did not produce ${executable}`);
+                const cachedDirectory = await tc.cacheDir(directory, name, version, process.arch);
+                return path.join(cachedDirectory, executable);
+            });
+        }
+        catch (err) {
+            if (attempt === INSTALL_RETRY_ATTEMPTS || !isTransientSpawnError(err))
+                throw err;
+            await new Promise((resolve) => setTimeout(resolve, INSTALL_RETRY_DELAY_MS * attempt));
+        }
+    }
+    throw new Error(`${name} installation failed after ${INSTALL_RETRY_ATTEMPTS} attempts`);
 }
 
 
