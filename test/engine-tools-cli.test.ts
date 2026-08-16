@@ -31,6 +31,7 @@ test("engine tools list prints every locked tool", () => {
   assert.match(result.stdout, /^opengrep\tgithub\t1\.26\.0$/m);
   assert.match(result.stdout, /^semgrep\tpypi\t1\.170\.0$/m);
   assert.match(result.stdout, /^trivy\tgithub\t0\.72\.0$/m);
+  assert.match(result.stdout, /^zizmor\tgithub\t1\.29\.0$/m);
 });
 
 test("engine tools list rejects unknown tools", () => {
