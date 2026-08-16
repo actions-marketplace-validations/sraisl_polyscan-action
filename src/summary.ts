@@ -115,26 +115,31 @@ function findingLocation(finding: Finding): string {
   return finding.line > 0 ? `${cleanFile}:${finding.line}` : cleanFile;
 }
 
+const SECRET_ENGINES = new Set(["gitleaks", "trufflehog"]);
+
 function secretsSection(findings: Finding[]): string[] {
-  const secrets = findings.filter((finding) => finding.engine === "gitleaks");
+  const secrets = findings.filter((finding) => SECRET_ENGINES.has(finding.engine));
   if (secrets.length === 0) return [];
 
   const lines = [
-    "### 🔑 Secrets Detected (gitleaks)",
+    "### 🔑 Secrets Detected",
     "",
-    "| Rule | Details | Location | Severity |",
-    "|---|---|---|---|",
+    "| Engine | Rule | Details | Location | Severity |",
+    "|---|---|---|---|---|",
   ];
   for (const finding of secrets) {
     lines.push(
-      `| ${ruleCell(finding)} | ${textCell(finding.message)} | ${code(findingLocation(finding))} | ` +
-        `${SEV_EMOJI[finding.severity]} ${finding.severity} |`,
+      `| ${tableCell(finding.engine)} | ${ruleCell(finding)} | ${textCell(finding.message)} | ` +
+        `${code(findingLocation(finding))} | ${SEV_EMOJI[finding.severity]} ${finding.severity} |`,
     );
   }
   return [
     ...lines,
     "",
-    "_gitleaks is run with `--redact`: secret values are masked by gitleaks at source and do not appear in logs or SARIF._",
+    "_gitleaks is run with `--redact`: secret values are masked at source. " +
+      "trufflehog's SARIF message never includes the secret value either. " +
+      "Neither appears in logs or SARIF. trufflehog's `critical` rows are **verified live** " +
+      "credentials; `high` rows matched a secret pattern but verification did not confirm them._",
     "",
   ];
 }

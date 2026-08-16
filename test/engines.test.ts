@@ -12,9 +12,10 @@ test("resolveEngines expands empty input to default engines", () => {
   assert.deepEqual(resolveEngines(""), [...DEFAULT_ENGINES]);
 });
 
-test("resolveEngines expands all case-insensitively without OpenGrep", () => {
+test("resolveEngines expands all case-insensitively without OpenGrep or trufflehog", () => {
   assert.deepEqual(resolveEngines("ALL"), [...DEFAULT_ENGINES]);
   assert.equal(resolveEngines("all").includes("opengrep"), false);
+  assert.equal(resolveEngines("all").includes("trufflehog"), false);
 });
 
 test("resolveEngines keeps explicit comma-separated selections", () => {

@@ -27,6 +27,7 @@
     "gosec",
     "spotbugs",
     "zizmor",
+    "trufflehog",
     "sarif",
     "sbom",
     "github-action"

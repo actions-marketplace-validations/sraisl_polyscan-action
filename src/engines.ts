@@ -23,6 +23,7 @@ export const SUPPORTED_ENGINES = [
   "gosec",
   "hadolint",
   "zizmor",
+  "trufflehog",
 ] as const;
 
 export type EngineName = (typeof SUPPORTED_ENGINES)[number];
