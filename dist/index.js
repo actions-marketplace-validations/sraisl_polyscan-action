@@ -90772,11 +90772,14 @@ async function withTempDir(prefix, run) {
 }
 // Concurrent tool installs each spawn subprocesses (tar/unzip) to extract
 // their archive. Under load this occasionally hits a transient Linux/Node
-// "spawn ETXTBSY" race unrelated to the archive itself, so a fresh attempt
-// (fresh temp dir, re-downloaded archive) is retried a few times.
+// "spawn ETXTBSY" race unrelated to the archive itself, so the install is
+// retried a few times, each attempt getting its own fresh temp dir.
 const INSTALL_RETRY_ATTEMPTS = 3;
 const INSTALL_RETRY_DELAY_MS = 250;
 function isTransientSpawnError(err) {
+    if (typeof err === "object" && err !== null && "code" in err) {
+        return err.code === "ETXTBSY";
+    }
     return /ETXTBSY/.test(String(err));
 }
 async function cachedTool(name, version, executable, install) {
