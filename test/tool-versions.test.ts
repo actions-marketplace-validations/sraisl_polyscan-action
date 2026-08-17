@@ -21,6 +21,7 @@ const EXPECTED_TOOLS = [
   "semgrep",
   "spotbugs",
   "trivy",
+  "trufflehog",
   "zizmor",
 ];
 
@@ -43,6 +44,7 @@ test("downloaded binary tools have pinned SHA-256 digests", () => {
     "opengrep",
     "spotbugs",
     "trivy",
+    "trufflehog",
     "zizmor",
   ] as const) {
     assert.match(TOOLS[name].sha256, /^[a-f0-9]{64}$/);
@@ -77,5 +79,9 @@ test("tool metadata expands to the existing download URLs", () => {
   assert.equal(
     githubReleaseUrl(TOOLS.zizmor),
     "https://github.com/zizmorcore/zizmor/releases/download/v1.29.0/zizmor-x86_64-unknown-linux-gnu.tar.gz",
+  );
+  assert.equal(
+    githubReleaseUrl(TOOLS.trufflehog),
+    "https://github.com/trufflesecurity/trufflehog/releases/download/v3.97.0/trufflehog_3.97.0_linux_amd64.tar.gz",
   );
 });

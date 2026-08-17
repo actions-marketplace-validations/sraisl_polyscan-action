@@ -87714,6 +87714,7 @@ exports.SUPPORTED_ENGINES = [
     "gosec",
     "hadolint",
     "zizmor",
+    "trufflehog",
 ];
 function resolveEngines(input) {
     const raw = input.trim();
@@ -89472,6 +89473,147 @@ async function runTrivy(target, image) {
 
 /***/ }),
 
+/***/ 23931:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.parseTrufflehogSarif = parseTrufflehogSarif;
+exports.runTrufflehog = runTrufflehog;
+// TruffleHog engine adapter — secret detection with live verification.
+// Opt-in (not part of "all"): unlike every other engine, verification makes
+// real network calls to each credential's own provider API (AWS, GitHub,
+// Slack, ...) to confirm a found secret is actually live, which is the
+// point of running it but is a materially different, non-deterministic
+// network posture than PolyScan's other (offline/deterministic) engines.
+const core = __importStar(__nccwpck_require__(37484));
+const fs = __importStar(__nccwpck_require__(73024));
+const path = __importStar(__nccwpck_require__(76760));
+const tc = __importStar(__nccwpck_require__(33472));
+const exec_1 = __nccwpck_require__(73190);
+const target_1 = __nccwpck_require__(76746);
+const tools_1 = __nccwpck_require__(51732);
+const tool_versions_1 = __nccwpck_require__(88947);
+const TRUFFLEHOG = tool_versions_1.TOOLS.trufflehog;
+// TruffleHog's SARIF writer reports a verified (live, working) credential as
+// "error" and everything else (detected but not confirmed live) as
+// "warning" — see pkg/output/sarif.go upstream. A verified secret is a
+// confirmed active breach, so it maps to critical; anything else defaults
+// to high rather than risking under-classifying an exposed credential.
+function mapSeverity(level) {
+    return (level || "").toLowerCase() === "error" ? "critical" : "high";
+}
+function parseTrufflehogSarif(sarif, abs) {
+    const findings = [];
+    for (const runObj of sarif.runs ?? []) {
+        for (const r of runObj.results ?? []) {
+            const result = r;
+            const ruleId = result.ruleId ?? "trufflehog";
+            const loc = result.locations?.[0]?.physicalLocation;
+            const uri = loc?.artifactLocation?.uri ?? "unknown";
+            findings.push({
+                engine: "trufflehog",
+                ruleId,
+                severity: mapSeverity(result.level ?? ""),
+                // TruffleHog's SARIF message never includes the secret value itself
+                // (it's a templated "Found <verified|unverified> result for detector
+                // <name>." string), so no redaction step is needed before this text
+                // reaches SARIF/the job summary.
+                message: result.message?.text ?? ruleId,
+                file: uri.replace(/^file:\/\//, "").replace(abs + "/", ""),
+                line: loc?.region?.startLine ?? 0,
+            });
+        }
+    }
+    return findings;
+}
+async function ensureTrufflehog() {
+    if (await (0, exec_1.which)("trufflehog"))
+        return "trufflehog";
+    core.info(`trufflehog not found - downloading v${TRUFFLEHOG.version}...`);
+    try {
+        return await (0, tools_1.cachedTool)("trufflehog", TRUFFLEHOG.version, "trufflehog", async (directory) => {
+            const archive = await (0, tools_1.downloadVerified)((0, tool_versions_1.githubReleaseUrl)(TRUFFLEHOG), TRUFFLEHOG.sha256);
+            await tc.extractTar(archive, directory);
+            fs.chmodSync(path.join(directory, "trufflehog"), 0o700);
+        });
+    }
+    catch (err) {
+        core.warning(`trufflehog download failed: ${String(err).slice(0, 200)}`);
+        return null;
+    }
+}
+async function runTrufflehog(target) {
+    const abs = (0, target_1.resolveTarget)(target);
+    const bin = await ensureTrufflehog();
+    if (!bin) {
+        return { engine: "trufflehog", findings: [], status: "failed", note: "trufflehog not installed" };
+    }
+    const result = await (0, exec_1.run)(bin, ["filesystem", "--sarif", "--no-update", "--log-level=-1", abs]);
+    if (!result.stdout.trim()) {
+        // Deliberately not including result.stderr here: this engine actively
+        // verifies live credentials, and its stderr is not a structured,
+        // redaction-guaranteed surface the way its SARIF output is — an exit
+        // code is enough to diagnose a failure without risking a secret value
+        // reaching the Actions log.
+        return {
+            engine: "trufflehog",
+            findings: [],
+            status: "failed",
+            note: `trufflehog produced no output (exit ${result.exitCode})`,
+        };
+    }
+    try {
+        const sarif = JSON.parse(result.stdout);
+        return { engine: "trufflehog", findings: parseTrufflehogSarif(sarif, abs), status: "success" };
+    }
+    catch (err) {
+        return {
+            engine: "trufflehog",
+            findings: [],
+            status: "failed",
+            note: `parse error: ${String(err).slice(0, 200)}`,
+        };
+    }
+}
+
+
+/***/ }),
+
 /***/ 76718:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -89862,6 +90004,7 @@ const gitleaks_1 = __nccwpck_require__(56363);
 const gosec_1 = __nccwpck_require__(7668);
 const hadolint_1 = __nccwpck_require__(10544);
 const zizmor_1 = __nccwpck_require__(76718);
+const trufflehog_1 = __nccwpck_require__(23931);
 const gate_1 = __nccwpck_require__(81956);
 const sarif_1 = __nccwpck_require__(20866);
 const sbom_1 = __nccwpck_require__(20594);
@@ -89935,6 +90078,8 @@ async function runEngine(name, target, trivyImage, opengrepConfig) {
                 return await (0, hadolint_1.runHadolint)(target);
             case "zizmor":
                 return await (0, zizmor_1.runZizmor)(target);
+            case "trufflehog":
+                return await (0, trufflehog_1.runTrufflehog)(target);
             default:
                 return { engine: name, findings: [], status: "failed", note: "unknown engine" };
         }
@@ -90606,24 +90751,28 @@ function findingLocation(finding) {
     const cleanFile = finding.file.startsWith("./") ? finding.file.slice(2) : finding.file;
     return finding.line > 0 ? `${cleanFile}:${finding.line}` : cleanFile;
 }
+const SECRET_ENGINES = new Set(["gitleaks", "trufflehog"]);
 function secretsSection(findings) {
-    const secrets = findings.filter((finding) => finding.engine === "gitleaks");
+    const secrets = findings.filter((finding) => SECRET_ENGINES.has(finding.engine));
     if (secrets.length === 0)
         return [];
     const lines = [
-        "### 🔑 Secrets Detected (gitleaks)",
+        "### 🔑 Secrets Detected",
         "",
-        "| Rule | Details | Location | Severity |",
-        "|---|---|---|---|",
+        "| Engine | Rule | Details | Location | Severity |",
+        "|---|---|---|---|---|",
     ];
     for (const finding of secrets) {
-        lines.push(`| ${ruleCell(finding)} | ${textCell(finding.message)} | ${code(findingLocation(finding))} | ` +
-            `${SEV_EMOJI[finding.severity]} ${finding.severity} |`);
+        lines.push(`| ${tableCell(finding.engine)} | ${ruleCell(finding)} | ${textCell(finding.message)} | ` +
+            `${code(findingLocation(finding))} | ${SEV_EMOJI[finding.severity]} ${finding.severity} |`);
     }
     return [
         ...lines,
         "",
-        "_gitleaks is run with `--redact`: secret values are masked by gitleaks at source and do not appear in logs or SARIF._",
+        "_gitleaks is run with `--redact`: secret values are masked at source. " +
+            "trufflehog's SARIF message never includes the secret value either. " +
+            "Neither appears in logs or SARIF. trufflehog's `critical` rows are **verified live** " +
+            "credentials; `high` rows matched a secret pattern but verification did not confirm them._",
         "",
     ];
 }
@@ -147458,7 +147607,7 @@ module.exports = /*#__PURE__*/JSON.parse('{"name":"@actions/artifact","version":
 /***/ ((module) => {
 
 "use strict";
-module.exports = /*#__PURE__*/JSON.parse('{"name":"polyscan-action","version":"1.0.0","description":"Multi-language SAST orchestrator as a native TypeScript GitHub Action with Quality Gate, SARIF, CycloneDX SBOM and job summary","main":"dist/index.js","engines":{"node":"24.x"},"scripts":{"prebuild":"node scripts/require-node24.cjs","build":"ncc build src/main.ts -o dist --source-map --license licenses.txt && node scripts/check-bundle.cjs","build:test":"tsc -p tsconfig.test.json","typecheck":"tsc --noEmit","test":"npm run build:test && node --test \\"dist-test/test/**/*.js\\"","all":"npm run typecheck && npm run build","engines:list":"node scripts/engine-tools.mjs list","engines:check":"node scripts/engine-tools.mjs check","engines:update":"node scripts/engine-tools.mjs update"},"keywords":["sast","security","semgrep","opengrep","bandit","eslint","gosec","spotbugs","zizmor","sarif","sbom","github-action"],"author":"Stefan Raisl","license":"MIT","dependencies":{"@actions/artifact":"^5.0.3","@actions/core":"^1.11.1","@actions/exec":"^1.1.1","@actions/tool-cache":"^2.0.2"},"devDependencies":{"@types/node":"26.2.0","@vercel/ncc":"0.45.0","typescript":"5.9.3"},"overrides":{"undici":"^6.28.0","brace-expansion":"5.0.9"}}');
+module.exports = /*#__PURE__*/JSON.parse('{"name":"polyscan-action","version":"1.0.0","description":"Multi-language SAST orchestrator as a native TypeScript GitHub Action with Quality Gate, SARIF, CycloneDX SBOM and job summary","main":"dist/index.js","engines":{"node":"24.x"},"scripts":{"prebuild":"node scripts/require-node24.cjs","build":"ncc build src/main.ts -o dist --source-map --license licenses.txt && node scripts/check-bundle.cjs","build:test":"tsc -p tsconfig.test.json","typecheck":"tsc --noEmit","test":"npm run build:test && node --test \\"dist-test/test/**/*.js\\"","all":"npm run typecheck && npm run build","engines:list":"node scripts/engine-tools.mjs list","engines:check":"node scripts/engine-tools.mjs check","engines:update":"node scripts/engine-tools.mjs update"},"keywords":["sast","security","semgrep","opengrep","bandit","eslint","gosec","spotbugs","zizmor","trufflehog","sarif","sbom","github-action"],"author":"Stefan Raisl","license":"MIT","dependencies":{"@actions/artifact":"^5.0.3","@actions/core":"^1.11.1","@actions/exec":"^1.1.1","@actions/tool-cache":"^2.0.2"},"devDependencies":{"@types/node":"26.2.0","@vercel/ncc":"0.45.0","typescript":"5.9.3"},"overrides":{"undici":"^6.28.0","brace-expansion":"5.0.9"}}');
 
 /***/ }),
 
@@ -147466,7 +147615,7 @@ module.exports = /*#__PURE__*/JSON.parse('{"name":"polyscan-action","version":"1
 /***/ ((module) => {
 
 "use strict";
-module.exports = /*#__PURE__*/JSON.parse('{"schemaVersion":1,"tools":{"bandit":{"provider":"pypi","package":"bandit","version":"1.9.4"},"detekt":{"provider":"github","repository":"detekt/detekt","version":"1.23.7","tagTemplate":"v{version}","assetTemplate":"detekt-cli-{version}-all.jar","sha256":"84beded283012cb2b38bcaef4996452fcd6069d2e9ca74b50eaa79e0ad21897e"},"eslint":{"provider":"npm","package":"eslint","version":"8.57.1"},"findsecbugs":{"provider":"maven","group":"com.h3xstream.findsecbugs","artifact":"findsecbugs-plugin","extension":"jar","version":"1.13.0","sha256":"c239763a8c327b5fb653a34dece6398578bf435b9a32c212bb8e1abe701368a5"},"gitleaks":{"provider":"github","repository":"gitleaks/gitleaks","version":"8.21.0","tagTemplate":"v{version}","assetTemplate":"gitleaks_{version}_linux_x64.tar.gz","sha256":"6c3a240509647225997d31df06e872350e1c0fe2fb85d323ae29a9fef0012586"},"gosec":{"provider":"github","repository":"securego/gosec","version":"2.28.0","tagTemplate":"v{version}","assetTemplate":"gosec_{version}_linux_amd64.tar.gz","sha256":"d7882e505b1ff345d458bf0e893eec8019bc849f861ad73a212869540dd505ff"},"hadolint":{"provider":"github","repository":"hadolint/hadolint","version":"2.15.1","tagTemplate":"v{version}","assetTemplate":"hadolint-linux-x86_64","sha256":"c7187db94eeeeca956519a6af171adc31453941a1e777961f6e680f697c8c507"},"kotlin":{"provider":"github","repository":"JetBrains/kotlin","version":"1.9.24","tagTemplate":"v{version}","assetTemplate":"kotlin-compiler-{version}.zip","sha256":"eb7b68e01029fa67bc8d060ee54c12018f2c60ddc438cf21db14517229aa693b"},"opengrep":{"provider":"github","repository":"opengrep/opengrep","version":"1.26.0","tagTemplate":"v{version}","assetTemplate":"opengrep_manylinux_x86","sha256":"40c21299eeddabf743b856daa843d24f9d4a027130671cd45b3b21776fd9ab26"},"semgrep":{"provider":"pypi","package":"semgrep","version":"1.170.0"},"spotbugs":{"provider":"github","repository":"spotbugs/spotbugs","version":"4.9.8","tagTemplate":"{version}","assetTemplate":"spotbugs-{version}.tgz","sha256":"2eb8e0f2b223c22ffa2ce0c1cf1be4127dde19d240b8f7ce69a5fd3ad5c36ff3"},"trivy":{"provider":"github","repository":"aquasecurity/trivy","version":"0.72.0","tagTemplate":"v{version}","assetTemplate":"trivy_{version}_Linux-64bit.tar.gz","sha256":"bbb64b9695866ce4a7a8f5c9592002c5961cab378577fa3f8a040df362b9b2ea"},"zizmor":{"provider":"github","repository":"zizmorcore/zizmor","version":"1.29.0","tagTemplate":"v{version}","assetTemplate":"zizmor-x86_64-unknown-linux-gnu.tar.gz","sha256":"dd96df044a6e8538d5f423790f453bdd03d49e5b2bcc38214acc41a2f1297839"}}}');
+module.exports = /*#__PURE__*/JSON.parse('{"schemaVersion":1,"tools":{"bandit":{"provider":"pypi","package":"bandit","version":"1.9.4"},"detekt":{"provider":"github","repository":"detekt/detekt","version":"1.23.7","tagTemplate":"v{version}","assetTemplate":"detekt-cli-{version}-all.jar","sha256":"84beded283012cb2b38bcaef4996452fcd6069d2e9ca74b50eaa79e0ad21897e"},"eslint":{"provider":"npm","package":"eslint","version":"8.57.1"},"findsecbugs":{"provider":"maven","group":"com.h3xstream.findsecbugs","artifact":"findsecbugs-plugin","extension":"jar","version":"1.13.0","sha256":"c239763a8c327b5fb653a34dece6398578bf435b9a32c212bb8e1abe701368a5"},"gitleaks":{"provider":"github","repository":"gitleaks/gitleaks","version":"8.21.0","tagTemplate":"v{version}","assetTemplate":"gitleaks_{version}_linux_x64.tar.gz","sha256":"6c3a240509647225997d31df06e872350e1c0fe2fb85d323ae29a9fef0012586"},"gosec":{"provider":"github","repository":"securego/gosec","version":"2.28.0","tagTemplate":"v{version}","assetTemplate":"gosec_{version}_linux_amd64.tar.gz","sha256":"d7882e505b1ff345d458bf0e893eec8019bc849f861ad73a212869540dd505ff"},"hadolint":{"provider":"github","repository":"hadolint/hadolint","version":"2.15.1","tagTemplate":"v{version}","assetTemplate":"hadolint-linux-x86_64","sha256":"c7187db94eeeeca956519a6af171adc31453941a1e777961f6e680f697c8c507"},"kotlin":{"provider":"github","repository":"JetBrains/kotlin","version":"1.9.24","tagTemplate":"v{version}","assetTemplate":"kotlin-compiler-{version}.zip","sha256":"eb7b68e01029fa67bc8d060ee54c12018f2c60ddc438cf21db14517229aa693b"},"opengrep":{"provider":"github","repository":"opengrep/opengrep","version":"1.26.0","tagTemplate":"v{version}","assetTemplate":"opengrep_manylinux_x86","sha256":"40c21299eeddabf743b856daa843d24f9d4a027130671cd45b3b21776fd9ab26"},"semgrep":{"provider":"pypi","package":"semgrep","version":"1.170.0"},"spotbugs":{"provider":"github","repository":"spotbugs/spotbugs","version":"4.9.8","tagTemplate":"{version}","assetTemplate":"spotbugs-{version}.tgz","sha256":"2eb8e0f2b223c22ffa2ce0c1cf1be4127dde19d240b8f7ce69a5fd3ad5c36ff3"},"trivy":{"provider":"github","repository":"aquasecurity/trivy","version":"0.72.0","tagTemplate":"v{version}","assetTemplate":"trivy_{version}_Linux-64bit.tar.gz","sha256":"bbb64b9695866ce4a7a8f5c9592002c5961cab378577fa3f8a040df362b9b2ea"},"trufflehog":{"provider":"github","repository":"trufflesecurity/trufflehog","version":"3.97.0","tagTemplate":"v{version}","assetTemplate":"trufflehog_{version}_linux_amd64.tar.gz","sha256":"62224de2f9dd7cd418800feb953760a302ed2f82a7c547fe1146a4874fb179e4"},"zizmor":{"provider":"github","repository":"zizmorcore/zizmor","version":"1.29.0","tagTemplate":"v{version}","assetTemplate":"zizmor-x86_64-unknown-linux-gnu.tar.gz","sha256":"dd96df044a6e8538d5f423790f453bdd03d49e5b2bcc38214acc41a2f1297839"}}}');
 
 /***/ })
 

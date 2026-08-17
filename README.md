@@ -45,7 +45,7 @@ jobs:
 | Input | Default | Description |
 |---|---|---|
 | `target` | `.` | Workspace-contained directory to scan |
-| `engines` | `all` | `all` or comma-separated engines: `semgrep,opengrep,bandit,eslint,spotbugs,trivy,detekt,gitleaks,gosec,hadolint,zizmor`. OpenGrep is opt-in and is not included by `all`. |
+| `engines` | `all` | `all` or comma-separated engines: `semgrep,opengrep,bandit,eslint,spotbugs,trivy,detekt,gitleaks,gosec,hadolint,zizmor,trufflehog`. OpenGrep and trufflehog are opt-in and are not included by `all`. |
 | `opengrep-config` | `auto` | OpenGrep rules config: `auto`, a local path, URL, or registry ID |
 | `max-concurrency` | `2` | Maximum concurrent read-only engines (`1`-`10`); SpotBugs runs as a serial barrier |
 | `max-critical` | `0` | Max critical findings before the gate fails |
@@ -87,12 +87,15 @@ jobs:
 | **gosec** | Go | Go-native security analysis; scans each detected Go module and preserves native severity and CWE data from SARIF |
 | **hadolint** | Dockerfiles | Dockerfile linter (incl. embedded shell via ShellCheck); standalone Linux x64 binary; SARIF parsed natively |
 | **zizmor** | GitHub Actions workflows | Workflow security (dangerous triggers, template-injection, unpinned actions, excessive permissions, credential persistence); standalone Linux x64 binary; runs `--offline`; SARIF parsed natively |
+| **trufflehog** | any file | opt-in; secret detection with **live verification** — confirms a found credential actually works against its own provider API (AWS, GitHub, Slack, ...) instead of only pattern-matching; verified secrets are reported as `critical`, unverified as `high` |
 
 Python engines are installed into isolated, version-pinned environments. OpenGrep does not require Python: PolyScan uses the exact pinned executable from `PATH` when available, otherwise it downloads and caches a SHA-256-verified standalone binary. Other downloaded tools are also cached and verified with SHA-256. SpotBugs is **build-aware** — for real Java/Kotlin projects it invokes the project's own build (Maven/Gradle) so the full dependency classpath is available, which is required to detect data-flow bugs (SQLi, command injection) on **Java** (FindSecBugs does not target Kotlin bytecode). For **Kotlin** code-security use **detekt**, which analyzes Kotlin source natively. gosec is downloaded only when Go files are present and requires the Go toolchain available on the runner. Trivy runs `--offline-scan` to avoid Maven Central rate limits.
 
-**Default: `engines: "all"` expands to** `semgrep,bandit,eslint,spotbugs,trivy,detekt,gitleaks,gosec,hadolint,zizmor`. Each language-specific engine (gosec, detekt, hadolint, zizmor, …) runs a quick file-presence check and is skipped with no findings and no download when its file type isn't present, so `all` stays cheap on repositories that don't use that language. OpenGrep is an explicit alternative and can be selected with `engines: "opengrep"` or combined with other engines.
+**Default: `engines: "all"` expands to** `semgrep,bandit,eslint,spotbugs,trivy,detekt,gitleaks,gosec,hadolint,zizmor`. Each language-specific engine (gosec, detekt, hadolint, zizmor, …) runs a quick file-presence check and is skipped with no findings and no download when its file type isn't present, so `all` stays cheap on repositories that don't use that language. OpenGrep and trufflehog are explicit opt-ins and can be selected with `engines: "opengrep,trufflehog"` or combined with other engines.
 
 `opengrep-config: "auto"` loads OpenGrep's automatic rules configuration and can require network access. Use a repository-local rule file, for example `opengrep-config: ".opengrep/rules.yml"`, for deterministic and offline-friendly scans.
+
+trufflehog is opt-in because, unlike every other engine, its verification step makes live network calls to each credential's own provider API to confirm it actually works — a deliberately different (and non-deterministic, network-dependent) posture than the rest of PolyScan's offline scans. No extra token or permission is required: verification authenticates using the discovered credential itself, not a token supplied by PolyScan.
 
 Read-only engines run with bounded concurrency (`max-concurrency`, default `2`). SpotBugs may invoke a project build and therefore runs as a serial barrier: all earlier engines finish before it starts, and later engines start only after it completes.
 

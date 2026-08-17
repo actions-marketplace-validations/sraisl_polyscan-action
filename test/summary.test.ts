@@ -144,6 +144,39 @@ test("renderSummary leaves zizmor's fallback ruleId ('zizmor') unlinked", () => 
   assert.doesNotMatch(summary, /\[`zizmor`]/);
 });
 
+test("renderSummary shows gitleaks and trufflehog findings together in one Secrets section", () => {
+  const findings: Finding[] = [
+    {
+      engine: "gitleaks",
+      ruleId: "aws-access-token",
+      severity: "critical",
+      message: "AWS access token detected",
+      file: "config.py",
+      line: 3,
+    },
+    {
+      engine: "trufflehog",
+      ruleId: "AWS",
+      severity: "critical",
+      message: "Found verified result for detector AWS.",
+      file: "config.py",
+      line: 3,
+    },
+  ];
+  const engines: EngineResult[] = [
+    { engine: "gitleaks", findings: [findings[0]], status: "success" },
+    { engine: "trufflehog", findings: [findings[1]], status: "success" },
+  ];
+  const counts = countBySeverity(findings);
+  const gate = evaluateGate(findings, { maxCritical: 0, maxHigh: 0, maxMedium: 50 });
+  const summary = renderSummary(findings, counts, gate, true, engines);
+
+  assert.match(summary, /### 🔑 Secrets Detected/);
+  assert.doesNotMatch(summary, /Secrets Detected \(gitleaks\)/);
+  assert.match(summary, /gitleaks.*aws-access-token/);
+  assert.match(summary, /trufflehog.*`AWS`/);
+});
+
 test("renderSummary falls back to a CWE link when no engine-specific link applies", () => {
   const summary = renderFor({
     engine: "bandit",
