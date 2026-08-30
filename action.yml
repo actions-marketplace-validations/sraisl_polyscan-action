@@ -1,4 +1,4 @@
-name: "PolyScan"
+name: "PolyScan SAST Security Scanner"
 description: "Multi-language SAST scan with Quality Gate, SARIF, CycloneDX SBOM and job summary — native TypeScript action"
 author: "Stefan Raisl"
 branding:

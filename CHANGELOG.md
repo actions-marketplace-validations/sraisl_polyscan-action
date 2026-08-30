@@ -15,6 +15,12 @@ tags and must not be reused or moved.
 
 ### Changed
 
+- Renamed the Marketplace listing to PolyScan SAST Security Scanner.
+
+## [v16.0.0] - 2026-08-30
+
+### Changed
+
 - Adopted semantic versioning (`vX.Y.Z`) with a floating major tag (`vX`) that tracks the
   latest release in that major line, replacing the previous plain-integer tag scheme
   (`v1`…`v15`). New usage should pin `@v16` (or an exact `@vX.Y.Z`) instead of `@v1`.
