@@ -6,18 +6,26 @@
       "package": "bandit",
       "version": "1.9.4"
     },
+    "betterleaks": {
+      "provider": "github",
+      "repository": "betterleaks/betterleaks",
+      "version": "1.8.1",
+      "tagTemplate": "v{version}",
+      "assetTemplate": "betterleaks_{version}_linux_x64.tar.gz",
+      "sha256": "efa407244e1ea8e35f582b8a42becdeac08bdead04f68eb752adda722d583c2a"
+    },
     "detekt": {
       "provider": "github",
       "repository": "detekt/detekt",
-      "version": "1.23.7",
+      "version": "1.23.8",
       "tagTemplate": "v{version}",
       "assetTemplate": "detekt-cli-{version}-all.jar",
-      "sha256": "84beded283012cb2b38bcaef4996452fcd6069d2e9ca74b50eaa79e0ad21897e"
+      "sha256": "2ce2ff952e150baf28a29cda70a363b0340b3e81a55f43e51ec5edffc3d066c1"
     },
     "eslint": {
       "provider": "npm",
       "package": "eslint",
-      "version": "10.9.1"
+      "version": "10.11.0"
     },
     "findsecbugs": {
       "provider": "maven",
@@ -54,23 +62,23 @@
     "kotlin": {
       "provider": "github",
       "repository": "JetBrains/kotlin",
-      "version": "2.4.10",
+      "version": "2.4.20",
       "tagTemplate": "v{version}",
       "assetTemplate": "kotlin-compiler-{version}.zip",
-      "sha256": "473dd66c7a3ef4b182065b3da670466c1bf2773a9dbb0ed8b33a39fe9d4f876d"
+      "sha256": "59e9ca74c7904ef2c122b12114937673ccce68de820a663f0ed66ccf8799e0b7"
     },
     "opengrep": {
       "provider": "github",
       "repository": "opengrep/opengrep",
-      "version": "1.28.0",
+      "version": "1.30.0",
       "tagTemplate": "v{version}",
       "assetTemplate": "opengrep_manylinux_x86",
-      "sha256": "85af2f34e5175995acbc431e1ca733e34062aad9640ad4308422abe1968b84cf"
+      "sha256": "35779bdd72e92129c8df2a77f0c55e8c08356801ea92591ef32108d6b28d564c"
     },
     "semgrep": {
       "provider": "pypi",
       "package": "semgrep",
-      "version": "1.175.0"
+      "version": "1.177.0"
     },
     "spotbugs": {
       "provider": "github",
@@ -91,18 +99,18 @@
     "trufflehog": {
       "provider": "github",
       "repository": "trufflesecurity/trufflehog",
-      "version": "3.97.1",
+      "version": "3.97.5",
       "tagTemplate": "v{version}",
       "assetTemplate": "trufflehog_{version}_linux_amd64.tar.gz",
-      "sha256": "f863ea3a8d786f7d097870496c977944cce7372a2fe1e56707d965016e543ece"
+      "sha256": "e3d97199c565c37ca6152750197f667e08ae6a1edf5911fbdec168622b28620c"
     },
     "zizmor": {
       "provider": "github",
       "repository": "zizmorcore/zizmor",
-      "version": "1.29.0",
+      "version": "1.30.1",
       "tagTemplate": "v{version}",
       "assetTemplate": "zizmor-x86_64-unknown-linux-gnu.tar.gz",
-      "sha256": "dd96df044a6e8538d5f423790f453bdd03d49e5b2bcc38214acc41a2f1297839"
+      "sha256": "e65324f4430c2717591937edcec90ccbefaf14c174f8ec9415e03ca875b46e1a"
     }
   }
 }

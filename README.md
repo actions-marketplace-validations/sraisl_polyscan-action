@@ -1,6 +1,6 @@
 # PolyScan Action
 
-**Multi-language SAST as a native GitHub Action.** One step runs all configured security engines — Semgrep, OpenGrep, Bandit, ESLint, SpotBugs, detekt, gosec, Trivy, gitleaks, hadolint and zizmor — normalizes every result into a single schema, enforces a configurable **Quality Gate**, and emits **SARIF**, a **CycloneDX SBOM** and a rich **job summary** — plus optional artifact upload.
+**Multi-language SAST as a native GitHub Action.** One step runs all configured security engines — Semgrep, OpenGrep, Bandit, ESLint, SpotBugs, detekt, gosec, Trivy, gitleaks, betterleaks, hadolint and zizmor — normalizes every result into a single schema, enforces a configurable **Quality Gate**, and emits **SARIF**, a **CycloneDX SBOM** and a rich **job summary** — plus optional artifact upload.
 
 Written in TypeScript, bundled with `@vercel/ncc`, runs as a native GitHub Action on the `node24` runtime.
 
@@ -49,7 +49,7 @@ jobs:
 | Input | Default | Description |
 |---|---|---|
 | `target` | `.` | Workspace-contained directory to scan |
-| `engines` | `all` | `all` or comma-separated engines: `semgrep,opengrep,bandit,eslint,spotbugs,trivy,detekt,gitleaks,gosec,hadolint,zizmor,trufflehog`. OpenGrep and trufflehog are opt-in and are not included by `all`. |
+| `engines` | `all` | `all` or comma-separated engines: `semgrep,opengrep,bandit,eslint,spotbugs,trivy,detekt,gitleaks,betterleaks,gosec,hadolint,zizmor,trufflehog`. OpenGrep and trufflehog are opt-in and are not included by `all`. |
 | `opengrep-config` | `auto` | OpenGrep rules config: `auto`, a local path, URL, or registry ID |
 | `max-concurrency` | `2` | Maximum concurrent read-only engines (`1`-`10`); SpotBugs runs as a serial barrier |
 | `max-critical` | `0` | Max critical findings before the gate fails |
@@ -88,6 +88,7 @@ jobs:
 | **Trivy** | deps + IaC | SCA (vulnerable dependencies / CVEs) + misconfig; binary downloaded on demand |
 | **detekt** | Kotlin | Kotlin-native static analysis (incl. security rules) via detekt CLI; SARIF parsed |
 | **gitleaks** | git history + working tree | Secret / credential detection (API keys, tokens, passwords) via gitleaks CLI; SARIF parsed |
+| **betterleaks** | working tree (current filesystem state; not git history) | Secret / credential detection via betterleaks CLI (maintained by the original gitleaks author); JSON report parsed. When a rule defines live validation, a confirmed-active credential is reported as `critical`, a confirmed-dead one as `low`, and everything else defaults to `high` |
 | **gosec** | Go | Go-native security analysis; scans each detected Go module and preserves native severity and CWE data from SARIF |
 | **hadolint** | Dockerfiles | Dockerfile linter (incl. embedded shell via ShellCheck); standalone Linux x64 binary; SARIF parsed natively |
 | **zizmor** | GitHub Actions workflows | Workflow security (dangerous triggers, template-injection, unpinned actions, excessive permissions, credential persistence); standalone Linux x64 binary; runs `--offline`; SARIF parsed natively |
@@ -95,7 +96,7 @@ jobs:
 
 Python engines are installed into isolated, version-pinned environments. OpenGrep does not require Python: PolyScan uses the exact pinned executable from `PATH` when available, otherwise it downloads and caches a SHA-256-verified standalone binary. Other downloaded tools are also cached and verified with SHA-256. SpotBugs is **build-aware** — for real Java/Kotlin projects it invokes the project's own build (Maven/Gradle) so the full dependency classpath is available, which is required to detect data-flow bugs (SQLi, command injection) on **Java** (FindSecBugs does not target Kotlin bytecode). For **Kotlin** code-security use **detekt**, which analyzes Kotlin source natively. gosec is downloaded only when Go files are present and requires the Go toolchain available on the runner. Trivy runs `--offline-scan` to avoid Maven Central rate limits.
 
-**Default: `engines: "all"` expands to** `semgrep,bandit,eslint,spotbugs,trivy,detekt,gitleaks,gosec,hadolint,zizmor`. Each language-specific engine (gosec, detekt, hadolint, zizmor, …) runs a quick file-presence check and is skipped with no findings and no download when its file type isn't present, so `all` stays cheap on repositories that don't use that language. OpenGrep and trufflehog are explicit opt-ins and can be selected with `engines: "opengrep,trufflehog"` or combined with other engines.
+**Default: `engines: "all"` expands to** `semgrep,bandit,eslint,spotbugs,trivy,detekt,gitleaks,betterleaks,gosec,hadolint,zizmor`. Each language-specific engine (gosec, detekt, hadolint, zizmor, …) runs a quick file-presence check and is skipped with no findings and no download when its file type isn't present, so `all` stays cheap on repositories that don't use that language. OpenGrep and trufflehog are explicit opt-ins and can be selected with `engines: "opengrep,trufflehog"` or combined with other engines.
 
 `opengrep-config: "auto"` loads OpenGrep's automatic rules configuration and can require network access. Use a repository-local rule file, for example `opengrep-config: ".opengrep/rules.yml"`, for deterministic and offline-friendly scans.
 
@@ -137,7 +138,7 @@ MIT, Apache-2.0, ISC, BSD-3-Clause, BlueOak-1.0.0, 0BSD, and CC0; that file, not
 the authoritative list). The scan engines below are **not** bundled or vendored: PolyScan installs
 each one from its official distribution channel at scan time and invokes it as a separate
 subprocess — PolyScan never links against or redistributes their code. Binary/archive downloads
-(detekt, gitleaks, gosec, hadolint, the Kotlin compiler, opengrep, SpotBugs/FindSecBugs, Trivy,
+(betterleaks, detekt, gitleaks, gosec, hadolint, the Kotlin compiler, opengrep, SpotBugs/FindSecBugs, Trivy,
 trufflehog, zizmor) are SHA-256-verified against `tools.lock.json`; Semgrep and Bandit are
 installed via `pip install <tool>==<version>` and ESLint via `npm install eslint@<version>`,
 pinned to an exact version but relying on PyPI/npm registry integrity rather than PolyScan's own
@@ -145,7 +146,7 @@ checksum verification.
 
 | Engine | License |
 |---|---|
-| ESLint, gitleaks, zizmor | MIT |
+| ESLint, gitleaks, betterleaks, zizmor | MIT |
 | Bandit, gosec, detekt, Kotlin compiler, Trivy | Apache-2.0 |
 | Semgrep, OpenGrep, SpotBugs | LGPL-2.1 |
 | FindSecBugs | LGPL-3.0 |
@@ -163,6 +164,17 @@ maintains its own unrestricted rule set for exactly this reason.
 ## Versioning
 
 Releases are tagged as semver (`vX.Y.Z`) with a floating major tag (e.g. `v16`) that always points at the latest `v16.x.y` — pin `@v16` for automatic minor/patch updates, or pin an exact `@vX.Y.Z`. Tags `v1` through `v15` predate this scheme (plain incrementing integers, not semver) and are kept as-is for existing consumers; the new scheme starts at `v16` precisely to avoid colliding with any of them. New usage should pin `@v16` or later. See [CHANGELOG.md](CHANGELOG.md).
+
+## Releasing
+
+Releases are cut manually via the `Release` workflow (`.github/workflows/release.yml`):
+
+1. On the Actions tab, run the `Release` workflow (`workflow_dispatch`) against `main`.
+2. It checks out `main`, runs typecheck/tests, rebuilds `dist/` and verifies it matches what's committed.
+3. It computes the next `vN` tag (highest existing `vN` + 1), tags `main`, and pushes **only the tag** — `main` is branch-protected and is never pushed to by this workflow.
+4. Consumers pin `sraisl/polyscan-action@vN` to that tag (see [Usage](#usage)).
+
+If `dist/` doesn't match a fresh build, the workflow fails — merge a PR that rebuilds and commits `dist/` before releasing.
 
 ## License
 
